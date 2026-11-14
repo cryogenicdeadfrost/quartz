@@ -320,7 +320,7 @@ end
 | :--- | :--- | :--- | :--- |
 | **`quartz.mirage`** | `ocamlopt` + Solo5 / Xen | `paf` + `mirage-tcpip` + `ocaml-tls`; static assets baked via `crunch`; storage via `irmin` / block KV | Bare-metal KVM, Ukvm, AWS EC2/Firecracker, Vultr, Equinix |
 | **`quartz.unix`** | `ocamlopt` (OCaml 5 Domains) | Multi-core socket pool + keep-alive + native WebSockets; dev mode adds `Unix.stat` Hot-Reload | Docker on Fly.io, Railway, Render, Cloud Run, DigitalOcean, VPS |
-| **`quartz.vercel_native`** | `ocamlopt -ccopt -static` (musl Linux) | Speaks the AWS Lambda Runtime HTTP API (`GET /runtime/invocation/next` -> `Server.handle` -> `POST /response`) as a `bootstrap` binary inside `.vercel/output/functions/*.func/` | Vercel Functions (`provided.al2023`), AWS Lambda, Netlify Functions |
+| **`quartz.vercel_native`** | `ocamlopt -ccopt -static` (musl Linux) | Speaks the AWS Lambda Runtime HTTP API (`GET /runtime/invocation/next` -> `Server.handle` -> `POST /response`) as a `bootstrap` binary inside `.vercel/output/functions/*.func/` | AWS Lambda (`provided.al2023`, officially supported). Vercel custom runtimes are community-maintained (same pattern as `vercel-rust`) -- must be verified per release; `quartz.edge_js` is the guaranteed Vercel path. |
 | **`quartz.edge_js`** | `js_of_ocaml` or `wasm_of_ocaml` | Exports standard WinterCG `export default { async fetch(req, env) }` wrapping `Server.handle`; state in Vercel KV / Upstash Redis / Cloudflare D1 | Vercel Node & Edge, Cloudflare Workers, Deno Deploy, Bun |
 | **`quartz.browser`** | `js_of_ocaml` / `wasm_of_ocaml` + `brr` | Hydrates `[data-q-island]` nodes in the DOM, runs client Signals offline, drives WebGPU/WebGL2 3D canvases, and calls arbitrary npm/JS packages via typed FFI | Runs inside every visitor's browser |
 
@@ -343,7 +343,7 @@ vs. bridge.
 | **Database Layer, Migrations & Query Safety** | Prisma / Drizzle ORM / Bun `bun:sqlite` | **Hybrid:** Built-in zero-dependency append-only log + B-tree index store (`Quartz.Store`) for instant single-binary apps; functor adapters for **`caqti` (PostgreSQL / SQLite)**, **`pgx` (pure-OCaml Postgres)**, and **`irmin` (Git-like branching DB for Unikernels)** with schema migration runner (`quartz db migrate`). |
 | **Multipart Uploads, Streaming & Range Requests** | Express `multer` / Bun `Bun.file` | **From scratch:** Streaming `multipart/form-data` parser with byte-size limits, MIME magic-byte sniffing, and `Accept-Ranges` / `206 Partial Content` for video/audio streaming. |
 | **Background Jobs, Cron & Queues** | BullMQ / Nuxt Nitro Tasks / Vercel Cron | **From scratch:** In-process fiber/Domain task queue (`Jobs.schedule ~every:60.0`, `Jobs.enqueue ~retries:3`) plus HTTP webhook trigger endpoints (`/api/__cron/*`) for serverless hosts. |
-| **Real-Time WebSockets + PubSub Rooms** | `Bun.serve` WebSockets / Socket.io / PartyKit | **From scratch:** RFC 6455 WebSocket upgrade + binary/text framing + topic rooms (`Ws.join "room:42"`, `Ws.broadcast "room:42" msg`) so multiplayer cursors, chat, and live order books stream at <1 ms latency. |
+| **Real-Time WebSockets + PubSub Rooms** | `Bun.serve` WebSockets / Socket.io / PartyKit | **From scratch:** RFC 6455 WebSocket upgrade + binary/text framing + topic rooms (`Ws.join "room:42"`, `Ws.broadcast "room:42" msg`) so multiplayer cursors, chat, and live order books stream with low latency (in-process fan-out is microseconds; real-world latency is dominated by network RTT, so no "<1 ms" end-to-end promise). |
 
 ### 9.2 Frontend, Routing, Islands, Motion, Color Science & Live 3D (Next / SvelteKit / Framer / Three.js)
 
@@ -379,7 +379,89 @@ monolith:
 | **`quartz.mirage`** (Unikernel adapter over `paf`, `mirage-tcpip`, `crunch`, `irmin`) | Solo5 KVM (`hvt`), `virtio`, Xen | ~400 LOC | `mirage`, `paf`, `ocaml-tls`, `irmin` (optional package) |
 | **`quartz.browser`** (Client Island Hydrator, Offline Signals, FLIP Motion, WebGL2/Three.js 3D runner, JS FFI) | Browser (`app.client.js` / `.wasm`) | ~1,100 LOC | `js_of_ocaml`, `brr` (optional package) |
 
-**Total Core + All Adapters:** ~7,000 lines of clean, human-readable OCaml -- smaller
-than a single sub-package of Next.js or Webpack, compiling in milliseconds, and
-running everywhere from a 5 MB bare-metal Unikernel to Vercel and the browser GPU.
+**Total Core + All Adapters (original estimate):** ~7,000 LOC. See 10.1 for the
+corrected, realistic estimate.
+
+### 10.1 Corrected (Realistic) Budget
+
+The table above underestimates the work. Production-grade WebSockets, multipart,
+sessions, a GADT router, OKLCH/APCA, Scene3d, HMR, accessible headless primitives,
+and four deploy targets -- each with tests -- add up to roughly 2-3x more:
+
+| Package | Realistic LOC (incl. tests) | Notes |
+| :--- | :--- | :--- |
+| `quartz.core` | 8,000 - 11,000 | Router, signals, DOM diff, style, color, forms, charts, a11y primitives |
+| `quartz.unix` | 3,000 - 4,500 | HTTP/1.1 parser hardening, WebSockets, multipart, sessions, store, HMR |
+| `quartz.edge_js` + `quartz.vercel_native` | 1,200 - 2,000 | Promise bridge, Fetch request/response mapping, Lambda loop, output builder |
+| `quartz.mirage` | 800 - 1,500 | Functor glue, `crunch` assets, KV storage, TLS config |
+| `quartz.browser` | 2,500 - 4,000 | Hydrator, shared runtime chunk, FLIP motion, 3D runner, FFI bindings |
+| CLI + deploy + docs examples | 1,500 - 2,500 | `quartz new/dev/check/build/deploy`, templates |
+
+**Realistic total: ~17,000 - 25,000 LOC.** That is still small next to Next.js
+(hundreds of thousands of LOC) and realistic for 1-2 maintainers over 9-12 months.
+"Compiles in milliseconds" applies to incremental rebuilds of one module; a clean
+build of everything takes seconds.
+
+### 10.2 Corrections to Earlier Claims
+
+| Earlier Claim | Correction |
+| :--- | :--- |
+| `quartz.core` has zero `Unix` | **Not yet true.** `lib/backend/server.ml` and `lib/tooling/vite.ml` call `Unix` directly and the `quartz` library depends on `unix`. Step 1 of v4 is the physical split into `quartz.core` (no `unix`) + `quartz.unix`. |
+| Hello-world js_of_ocaml bundle is ~25-40 KB | Depends heavily on what is linked. Pure DOM code dead-code-eliminates well; using `Printf`/`Format` adds a lot of weight. `wasm_of_ocaml` requires WasmGC and output is larger. Budget is enforced by measurement, not assumed. |
+| Each island hydrates independently | All islands on a page must share **one** runtime chunk (`quartz-runtime.<hash>.js`) plus small per-island entry modules, or each island pays the runtime cost again. |
+| DevTools formatter shows OCaml variant names | Compiled OCaml keeps only numeric tags at runtime. Names are recoverable only if dev builds emit a debug name table (ppx-generated `[@@deriving quartz_debug]`). Source maps (`--source-map`) work today. |
+| HTML -> `Quartz.Dom` codegen gives shadcn/Radix parity | Codegen copies **markup only**. Most of Radix's value is behaviour (focus trap, roving tabindex, ARIA state, dismiss layers, portals). Parity needs a native headless primitives library (see 11.5). |
+| `quartz.edge_js` lets V8 run the server "natively" | It runs as ordinary JS/Wasm in V8. Cold start scales with bundle size, and Workers enforce compressed script size limits, so the edge build must be tree-shaken and measured in CI. |
+
+---
+
+## 11. Known Gaps vs. JavaScript and Concrete Solutions
+
+| # | Gap | Why JS Wins | Solution for Quartz | Status Target |
+| :--- | :--- | :--- | :--- | :--- |
+| 11.1 | **Async model fragmentation** | JS has one universal `Promise`. OCaml has Lwt, Eio, and Async; OCaml 5 effects in js_of_ocaml require CPS translation with a performance cost. | `quartz.core` defines one minimal `IO` signature (`return`, `bind`, `map`). Adapters: Lwt for `quartz.mirage` (Mirage is Lwt-native), direct/threads or Eio for `quartz.unix`, JS `Promise` for `quartz.edge_js`. Application code never names a concrete scheduler. | v4.0 |
+| 11.2 | **Unicode, `Intl`, dates, plurals** | `Intl.DateTimeFormat`, `Intl.PluralRules`, `Intl.Collator`, and `toLocaleString` are built into every JS runtime. OCaml strings are bytes. | Use `uutf` / `uucp` / `uunf` for UTF-8 decoding, case mapping, and normalization. `Quartz.I18n` provides message catalogs and plural rules for the top ~20 locales (CLDR-generated table). In `quartz.browser` and `quartz.edge_js`, delegate formatting to native `Intl` through FFI. Store timestamps as UTC `int64` and use `ptime` for parsing/formatting. | v4.1 |
+| 11.3 | **Image optimization** | `sharp` / Next `<Image>` resize and convert to AVIF/WebP on demand. These rely on native C libraries that cannot run inside a unikernel. | (a) Build-time pipeline: `quartz build` calls an external `libvips`/`imagemagick` binary if present to emit `srcset` variants. (b) Runtime: emit URLs for a CDN image service (Vercel Image, Cloudflare Images, imgproxy). (c) `Dom.img` always emits `width`/`height`/`loading="lazy"`/`decoding="async"`. Unikernels serve only pre-built variants. | v4.1 |
+| 11.4 | **Regex and JSON in stdlib** | JS has built-in `RegExp` and `JSON.parse`. OCaml stdlib has neither (`Str` is legacy and not thread-safe). | Depend on `re` (pure OCaml, works on every target) for validation and routing patterns. Ship `Quartz.Json`, a small zero-dependency codec (~600 LOC) with a `ppx_deriving`-style typed encoder/decoder later; `yojson` adapter optional. | v4.0 |
+| 11.5 | **Accessible UI primitives (shadcn/Radix)** | Thousands of tested React components with focus management and ARIA. | Build `Quartz.Headless`: `dialog` (native `<dialog>`), `popover` (Popover API + anchor positioning), `menu`, `tabs`, `combobox`, `listbox`, `tooltip`, `toast`, each following WAI-ARIA Authoring Practices, with roving tabindex and focus trap in `quartz.browser`. Styled defaults on top. `quartz import-html` converts markup and maps known patterns onto these primitives. Automated a11y checks in `quartz check` (roles, labels, focus order). | v4.0 core set, v4.2 full |
+| 11.6 | **npm vendor SDKs** | Stripe, Clerk, Mapbox, PostHog ship JS first. | `Quartz.Js_bridge` + Custom Elements wrappers; generate bindings with `ts2ocaml` from `.d.ts` files instead of hand-writing them. Vendor widgets are client-only islands with a server-rendered placeholder/skeleton. | v4.1 |
+| 11.7 | **Debugging experience** | Native JS objects in DevTools. | `--source-map` in dev builds; ppx-generated debug name table for variants and records; a `/__quartz/inspector` dev page showing live signals, route table, and request log; structured logs (`logs` library) with request IDs. | v4.1 |
+| 11.8 | **Docs, examples, AI tooling, hiring** | Huge JS community and LLM training data. | `quartz new` starter templates (blog, SaaS dashboard, docs site, API-only); an `llms.txt` and a single-file API reference; example apps deployed per target; cookbook for each JS concept ("Next server actions in Quartz"). | Ongoing |
+| 11.9 | **Security hardening** | Mature frameworks have years of CVE fixes. | Fuzz the HTTP parser, multipart parser, and cookie parser with `crowbar`/AFL; header and body size limits by default; auto-escaping in `Dom` with explicit `Dom.raw_unsafe`; CSRF + secure cookies on by default; dependency audit in CI. | v4.0 |
+| 11.10 | **HTTP/2, HTTP/3, TLS on `quartz.unix`** | Node/Bun ship HTTP/2 and TLS. | Production deployments sit behind a TLS-terminating proxy (Fly, Cloud Run, Caddy, Vercel). Native TLS via `ocaml-tls`; HTTP/2 via `h2` as optional package. `quartz.mirage` uses `paf` (HTTP/1.1 + HTTP/2 + TLS). | v4.2 |
+
+---
+
+## 12. Roadmap to a Stable, Deployable Release (v4.0 LTS, 2026)
+
+### 12.1 Release Phases
+
+| Phase | Scope | Exit Criteria |
+| :--- | :--- | :--- |
+| **v4.0-alpha** | Split `quartz.core` / `quartz.unix`; `IO` signature; `Quartz.Json`; `re`; sessions + signed cookies; embedded store + `caqti` adapter; security defaults | `quartz.core` builds with **no** `unix` dependency; all existing v3 examples still pass `quartz check` |
+| **v4.0-beta** | `quartz.edge_js` (Vercel/Cloudflare), `quartz.browser` islands with shared runtime chunk, `Quartz.Headless` core set, `quartz deploy vercel/fly/pages` | One example app deployed live to Vercel, Fly.io, and GitHub Pages from the same source; fuzzing runs in CI |
+| **v4.0 stable** | `quartz.mirage` adapter; HMR; docs + templates; API freeze for `quartz.core` | Same app boots as a MirageOS unikernel on Solo5 `hvt`; Lighthouse >= 95; zero WCAG AA failures; semver guarantee |
+| **v4.1** | I18n, image pipeline, `Js_bridge` + `ts2ocaml`, inspector, WebSockets rooms | Real-time demo + localized demo deployed |
+| **v4.2** | Scene3d (WebGL2 first, WebGPU second), full Headless set, HTTP/2 | 3D landing-page demo at 60 fps on mid-range hardware |
+
+### 12.2 Definition of "Stable"
+
+1. **API freeze** of `quartz.core` public signatures, with semver from v4.0 on.
+2. **Same source, 4 targets** proven in CI on every commit: Unix/Docker, Vercel (edge_js),
+   GitHub Pages (static), MirageOS (`hvt`).
+3. **Measured budgets enforced in CI:** server p99 latency, client JS per page,
+   edge bundle size, unikernel image size.
+4. **Security baseline:** fuzzed parsers, default CSRF/secure cookies/CSP headers,
+   no `Dom.raw_unsafe` in templates.
+5. **Docs:** getting started in under 5 minutes with `quartz new`, plus a migration guide for
+   Next/Express developers.
+
+### 12.3 Honest Bottom Line
+
+A stable, full-featured, standalone Quartz deployable in 2026 is **realistic**:
+nothing in this plan requires inventing new technology, and every piece (js_of_ocaml,
+wasm_of_ocaml, MirageOS, `paf`, `caqti`, `re`, `uutf`, `ptime`) already exists and is maintained.
+The real constraints are **engineering time** (~17-25k LOC, 9-12 months for 1-2
+maintainers) and **ecosystem size**, not technical feasibility. What Quartz will not do
+is match npm's breadth natively; it bridges to it instead.
 
