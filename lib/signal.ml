@@ -126,7 +126,6 @@ let effect (fn : unit -> (unit -> unit) option) =
   runner ();
   h
 
-(* simple effect without cleanup return so people don't have to write None every time *)
 let watch (fn : unit -> unit) =
   effect (fun () ->
     fn ();
@@ -150,12 +149,50 @@ let computed ?equals (fn : unit -> 'a) : 'a computed =
 
 let read (c : 'a computed) = get c
 
-(* tacked on reducer store helper for Redux/Elm enjoyers *)
 let create_store init reducer =
   let st = make init in
   let dispatch action = update st (fun cur -> reducer cur action) in
   (st, dispatch)
 
-(* shorthand operators because typing Signal.get 40 times in a view tree hurts *)
+(* undo/redo time-travel signal wrapper — handy for editors and interactive playgrounds *)
+type 'a history = {
+  current : 'a t;
+  mutable past : 'a list;
+  mutable future : 'a list;
+}
+
+let make_history init =
+  { current = make init; past = []; future = [] }
+
+let history_get h = get h.current
+
+let history_set h v =
+  let prev = peek h.current in
+  if prev <> v then (
+    h.past <- prev :: h.past;
+    h.future <- [];
+    set h.current v
+  )
+
+let undo h =
+  match h.past with
+  | [] -> false
+  | prev :: rest ->
+    let cur = peek h.current in
+    h.past <- rest;
+    h.future <- cur :: h.future;
+    set h.current prev;
+    true
+
+let redo h =
+  match h.future with
+  | [] -> false
+  | next_v :: rest ->
+    let cur = peek h.current in
+    h.future <- rest;
+    h.past <- cur :: h.past;
+    set h.current next_v;
+    true
+
 let ( !~ ) = get
 let ( <~ ) = set

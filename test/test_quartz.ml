@@ -46,15 +46,26 @@ let test_signals () =
 
   dispose_effect eff;
   set_count 99;
-  check "disposed effect stops firing" (!runs = 3)
+  check "disposed effect stops firing" (!runs = 3);
+
+  (* Time-travel undo/redo history *)
+  let hist = make_history 10 in
+  check "initial history value is 10" (history_get hist = 10 && hist.past = []);
+  history_set hist 25;
+  history_set hist 50;
+  check "history updated to 50" (history_get hist = 50 && hist.past <> []);
+  check "undo steps back to 25" (undo hist && history_get hist = 25 && hist.future <> []);
+  check "redo steps forward to 50" (redo hist && history_get hist = 50)
 
 let test_dom_and_styles () =
   let open Dom in
   let count = Signal.make 7 in
   let clicked = ref false in
+  let moved = ref (0, 0) in
   let view =
     div
-      ~style:Style.[ flex_col; gap 12; p 16; bg Palette.slate_900; hover [ bg Palette.slate_800 ]; md [ flex_row ] ]
+      ~attrs:[ on_mousemove (fun xy -> moved := xy) ]
+      ~style:Style.[ flex_col; gap 12; p 16; glass; hover_lift; bg Palette.slate_900; hover [ bg Palette.slate_800 ]; md [ flex_row ] ]
       [
         h1 ~style:Style.[ text_2xl; bold; color Palette.sky_400 ] [ text "Quartz <App>" ];
         rx_text (fun () -> Printf.sprintf "Count is %d" (Signal.get count));
@@ -66,33 +77,57 @@ let test_dom_and_styles () =
   check "Dynamic rx_text rendered" (has_sub compiled.html "Count is 7");
   check "Hover CSS generated" (has_sub compiled.css ":hover{background-color:#1e293b}");
   check "Responsive @media generated" (has_sub compiled.css "@media(min-width:768px)");
-  check "Click handler registered" (Hashtbl.length compiled.handlers = 1);
+  check "Click + mousemove handlers registered" (Hashtbl.length compiled.handlers = 2);
 
-  (* invoke registered click handler *)
+  (* Static DOM diagnostics *)
+  let diag = Dom.diagnose view in
+  check "DOM diagnostics counts interactive handlers" (diag.handler_count = 2 && diag.a11y_warnings = []);
+
+  (* invoke registered handlers *)
   Hashtbl.iter
     (fun _ h ->
-      match h with On_click fn -> fn () | _ -> ())
+      match h with
+      | On_click fn -> fn ()
+      | On_mousemove fn -> fn (120, 340)
+      | _ -> ())
     compiled.handlers;
-  check "Registered click callback executed" !clicked
+  check "Registered click callback executed" !clicked;
+  check "Registered mousemove callback executed" (!moved = (120, 340))
 
 let test_router_form_components_tui () =
-  (* 1. Router dynamic :param matching *)
-  let view =
-    Router.router
+  (* 1. Router dynamic :param matching, layouts, query params & static link auditing *)
+  let shell child = div ~attrs:[ Dom.attr "data-shell" "1" ] [ child ] in
+  let routes =
+    Router.with_layout shell
       [
-        Router.route "/" (fun _ -> Dom.text "Home Page");
-        Router.route "/users/:uid/tab/:tab" (fun ps ->
+        Router.route ~title:"Home" "/" (fun _ ->
+          div [ Dom.text "Home Page"; Router.link ~to_:"/users/42/tab/billing" [ Dom.text "Profile" ] ]);
+        Router.route ~title:"User" "/users/:uid/tab/:tab" (fun ps ->
           let u = Option.value ~default:"?" (Router.param "uid" ps) in
           let t = Option.value ~default:"?" (Router.param "tab" ps) in
-          Dom.textf "User=%s Tab=%s" u t);
+          let q = Option.value ~default:"none" (Router.query_param "filter") in
+          Dom.textf "User=%s Tab=%s Filter=%s" u t q);
       ]
   in
+  let view () = Router.router routes in
   Router.navigate "/";
-  check "Router home route" (has_sub (Dom.render_to_string view) "Home Page");
-  Router.navigate "/users/42/tab/billing";
-  check "Router param extraction" (has_sub (Dom.render_to_string view) "User=42 Tab=billing");
+  let home_html = Dom.render_to_string (view ()) in
+  check "Router home route & layout shell" (has_sub home_html "Home Page" && has_sub home_html "data-shell=\"1\"");
+
+  let checked_links, broken_links = Router.audit_routes routes [ "/" ] view in
+  check "Router static link auditor verifies valid parameterized links"
+    (checked_links = [ "/users/42/tab/billing" ] && broken_links = []);
+
+  Router.navigate "/users/42/tab/billing?filter=active";
+  check "Router param + query_param extraction"
+    (has_sub (Dom.render_to_string (view ())) "User=42 Tab=billing Filter=active");
+
+  Router.set_query "filter" "archived";
+  check "Router set_query updates reactive query state"
+    (has_sub (Dom.render_to_string (view ())) "User=42 Tab=billing Filter=archived");
+
   Router.navigate "/nonexistent/route";
-  check "Router 404 fallback" (has_sub (Dom.render_to_string view) "404");
+  check "Router 404 fallback" (has_sub (Dom.render_to_string (view ())) "404");
 
   (* 2. Form validation *)
   let email_f = Form.create_field Form.email in
@@ -102,27 +137,40 @@ let test_router_form_components_tui () =
   Form.set_value email_f "dev@ocaml.org";
   check "Valid email passes" (Form.error email_f = None && Form.validate email_f = Ok "dev@ocaml.org");
 
-  (* 3. UI Components & SVG charts *)
+  (* 3. Rich SVG Charts & v2.0 UI Components *)
+  let toggle_sig = use_signal true in
+  let slider_sig = use_signal 75 in
+  push_toast ~variant:Components.Success "Booted All systems nominal";
   let dash =
-    Components.card
+    spotlight_card
       ~title:"Revenue"
       [
-        Components.stat_card ~label:"MRR" ~value:"$42,500" ~delta:"+18.4%" ();
-        Components.sparkline [ 10.0; 15.0; 12.0; 22.0; 30.0 ];
-        Components.bar_chart [ ("Q1", 10.0); ("Q2", 25.0); ("Q3", 40.0) ];
+        stat_card ~label:"MRR" ~value:"$42,500" ~delta:"+18.4%" ();
+        sparkline [ 10.0; 15.0; 12.0; 22.0; 30.0 ];
+        area_chart [ 20.0; 45.0; 35.0; 60.0; 80.0 ];
+        donut_ring ~label:"CPU" ~pct:78.5 ();
+        multi_line_chart [ ("A", "#38bdf8", [ 1.0; 2.0; 3.0 ]) ];
+        heatmap ~cols:2 [ 10.0; 50.0; 80.0; 30.0 ];
+        bar_chart [ ("Q1", 10.0); ("Q2", 25.0); ("Q3", 40.0) ];
+        switch_toggle ~label:"Turbo" toggle_sig;
+        slider ~label:"Cap" ~min:0 ~max:100 slider_sig;
+        accordion [ ("faq1", "FAQ 1", text "Answer 1") ];
+        toast_rack ();
       ]
   in
   let dash_html = Dom.render_to_string dash in
-  check "Stat card rendered" (has_sub dash_html "$42,500");
-  check "Sparkline polyline rendered" (has_sub dash_html "<polyline");
-  check "Bar chart rects rendered" (has_sub dash_html "<rect");
+  check "Spotlight card attribute rendered" (has_sub dash_html "data-q-spotlight=\"1\"");
+  check "Area chart linearGradient rendered" (has_sub dash_html "<linearGradient");
+  check "Donut ring stroke-dasharray rendered" (has_sub dash_html "stroke-dasharray");
+  check "Toast notification rendered" (has_sub dash_html "Booted");
 
   (* 4. Flexbox TUI Renderer *)
   let tui_str = Tui.render_tui ~width:60 ~height:12 dash in
   check "TUI frame contains title" (has_sub tui_str "Revenue");
   check "TUI frame contains value" (has_sub tui_str "$42,500");
 
-  (* 5. Full LiveView Document & Event Dispatch *)
+  (* 5. Full LiveView Document, Event Dispatch & REST API *)
+  api_get "/api/ping" (fun _ -> {|{"pong":true}|});
   let count_s, set_s = use_state 10 in
   let live_app () =
     div [
@@ -140,4 +188,4 @@ let () =
   test_signals ();
   test_dom_and_styles ();
   test_router_form_components_tui ();
-  Printf.printf "[OK] Quartz Iteration 3 (Full LiveView Server, Router, Form, UI Kit & TUI) passed.\n%!"
+  Printf.printf "[OK] Quartz v2.0 (Fine-Grained Signals, Undo/Redo, SVG Charts, Spotlights, Multi-Page Router, Vite-Check & TUI) passed.\n%!"

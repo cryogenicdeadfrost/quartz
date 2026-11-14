@@ -11,6 +11,7 @@ type handler =
   | On_change of (string -> unit)
   | On_check of (bool -> unit)
   | On_keydown of (key_event -> unit)
+  | On_mousemove of ((int * int) -> unit)
   | On_submit of ((string * string) list -> unit)
 
 type attr =
@@ -40,9 +41,9 @@ let on_input fn = Handler (On_input fn)
 let on_change fn = Handler (On_change fn)
 let on_check fn = Handler (On_check fn)
 let on_keydown fn = Handler (On_keydown fn)
+let on_mousemove fn = Handler (On_mousemove fn)
 let on_submit fn = Handler (On_submit fn)
 
-(* 1-liner two-way binding so controlled inputs don't need 6 lines of boilerplate *)
 let bind_input (sig_v : string Signal.t) =
   [ Attr ("value", Signal.get sig_v); Handler (On_input (fun s -> Signal.set sig_v s)) ]
 
@@ -124,6 +125,9 @@ let input
     ?(type_ = "text")
     ?value
     ?placeholder
+    ?min
+    ?max
+    ?step
     ?(disabled = false)
     ?(required = false)
     ?style
@@ -136,6 +140,9 @@ let input
   (match name with Some n -> at := Attr ("name", n) :: !at | None -> ());
   (match value with Some v -> at := Attr ("value", v) :: !at | None -> ());
   (match placeholder with Some p -> at := Attr ("placeholder", p) :: !at | None -> ());
+  (match min with Some m -> at := Attr ("min", m) :: !at | None -> ());
+  (match max with Some m -> at := Attr ("max", m) :: !at | None -> ());
+  (match step with Some s -> at := Attr ("step", s) :: !at | None -> ());
   (match on_input with Some fn -> at := Handler (On_input fn) :: !at | None -> ());
   (match on_change with Some fn -> at := Handler (On_change fn) :: !at | None -> ());
   (match on_keydown with Some fn -> at := Handler (On_keydown fn) :: !at | None -> ());
@@ -205,6 +212,22 @@ let svg ~view_box ?(width = "100%") ?(height = "100%") ?style kids =
     ~attrs:[ Attr ("viewBox", view_box); Attr ("width", width); Attr ("height", height); Attr ("xmlns", "http://www.w3.org/2000/svg") ]
     kids
 
+let svg_defs kids = el "defs" kids
+
+let svg_linear_gradient ~id ?(x1 = "0%") ?(y1 = "0%") ?(x2 = "0%") ?(y2 = "100%") stops =
+  el "linearGradient"
+    ~attrs:[ Attr ("id", id); Attr ("x1", x1); Attr ("y1", y1); Attr ("x2", x2); Attr ("y2", y2) ]
+    stops
+
+let svg_stop ~offset ~color ?(opacity = 1.0) () =
+  el "stop"
+    ~attrs:[
+      Attr ("offset", offset);
+      Attr ("stop-color", color);
+      Attr ("stop-opacity", Printf.sprintf "%.2f" opacity);
+    ]
+    []
+
 let svg_path ~d ?(fill = "none") ?(stroke = "currentColor") ?(stroke_width = 2.0) () =
   el "path"
     ~attrs:[
@@ -217,9 +240,9 @@ let svg_path ~d ?(fill = "none") ?(stroke = "currentColor") ?(stroke_width = 2.0
     ]
     []
 
-let svg_rect ~x ~y ~width ~height ?(rx = 0.0) ?(fill = "currentColor") () =
-  el "rect"
-    ~attrs:[
+let svg_rect ~x ~y ~width ~height ?(rx = 0.0) ?(fill = "currentColor") ?stroke () =
+  let at =
+    [
       Attr ("x", Printf.sprintf "%.2f" x);
       Attr ("y", Printf.sprintf "%.2f" y);
       Attr ("width", Printf.sprintf "%.2f" width);
@@ -227,17 +250,40 @@ let svg_rect ~x ~y ~width ~height ?(rx = 0.0) ?(fill = "currentColor") () =
       Attr ("rx", Printf.sprintf "%.2f" rx);
       Attr ("fill", fill);
     ]
-    []
+  in
+  let at = match stroke with Some s -> Attr ("stroke", s) :: at | None -> at in
+  el "rect" ~attrs:at []
 
-let svg_circle ~cx ~cy ~r ?(fill = "currentColor") () =
-  el "circle"
-    ~attrs:[
-      Attr ("cx", Printf.sprintf "%.2f" cx);
-      Attr ("cy", Printf.sprintf "%.2f" cy);
-      Attr ("r", Printf.sprintf "%.2f" r);
-      Attr ("fill", fill);
-    ]
-    []
+let svg_circle ~cx ~cy ~r ?(fill = "currentColor") ?stroke ?stroke_width ?stroke_dasharray ?stroke_dashoffset () =
+  let at =
+    ref
+      [
+        Attr ("cx", Printf.sprintf "%.2f" cx);
+        Attr ("cy", Printf.sprintf "%.2f" cy);
+        Attr ("r", Printf.sprintf "%.2f" r);
+        Attr ("fill", fill);
+      ]
+  in
+  (match stroke with Some s -> at := Attr ("stroke", s) :: !at | None -> ());
+  (match stroke_width with Some sw -> at := Attr ("stroke-width", Printf.sprintf "%.2f" sw) :: !at | None -> ());
+  (match stroke_dasharray with Some da -> at := Attr ("stroke-dasharray", da) :: !at | None -> ());
+  (match stroke_dashoffset with Some doff -> at := Attr ("stroke-dashoffset", Printf.sprintf "%.2f" doff) :: !at | None -> ());
+  el "circle" ~attrs:!at []
+
+let svg_line ~x1 ~y1 ~x2 ~y2 ?(stroke = "currentColor") ?(stroke_width = 1.0) ?stroke_dasharray () =
+  let at =
+    ref
+      [
+        Attr ("x1", Printf.sprintf "%.2f" x1);
+        Attr ("y1", Printf.sprintf "%.2f" y1);
+        Attr ("x2", Printf.sprintf "%.2f" x2);
+        Attr ("y2", Printf.sprintf "%.2f" y2);
+        Attr ("stroke", stroke);
+        Attr ("stroke-width", Printf.sprintf "%.2f" stroke_width);
+      ]
+  in
+  (match stroke_dasharray with Some d -> at := Attr ("stroke-dasharray", d) :: !at | None -> ());
+  el "line" ~attrs:!at []
 
 let svg_polyline ~points ?(fill = "none") ?(stroke = "currentColor") ?(stroke_width = 2.0) () =
   let pts_str =
@@ -249,8 +295,28 @@ let svg_polyline ~points ?(fill = "none") ?(stroke = "currentColor") ?(stroke_wi
       Attr ("fill", fill);
       Attr ("stroke", stroke);
       Attr ("stroke-width", Printf.sprintf "%.2f" stroke_width);
+      Attr ("stroke-linecap", "round");
+      Attr ("stroke-linejoin", "round");
     ]
     []
+
+let svg_polygon ~points ?(fill = "currentColor") () =
+  let pts_str =
+    String.concat " " (List.map (fun (x, y) -> Printf.sprintf "%.2f,%.2f" x y) points)
+  in
+  el "polygon" ~attrs:[ Attr ("points", pts_str); Attr ("fill", fill) ] []
+
+let svg_text ~x ~y ?(fill = "#94a3b8") ?(font_size = 11) ?(anchor = "start") txt =
+  el "text"
+    ~attrs:[
+      Attr ("x", Printf.sprintf "%.2f" x);
+      Attr ("y", Printf.sprintf "%.2f" y);
+      Attr ("fill", fill);
+      Attr ("font-size", string_of_int font_size);
+      Attr ("text-anchor", anchor);
+      Attr ("font-family", "Inter, system-ui, sans-serif");
+    ]
+    [ Text txt ]
 
 (* HTML + Scoped CSS + Event Registry Compiler *)
 let escape_html s =
@@ -324,6 +390,7 @@ let compile_node (root : node) : compiled_view =
               | On_change _ -> "data-q-change"
               | On_check _ -> "data-q-check"
               | On_keydown _ -> "data-q-keydown"
+              | On_mousemove _ -> "data-q-mousemove"
               | On_submit _ -> "data-q-submit"
             in
             Printf.bprintf html_buf " %s=\"%d\"" attr_name hid)
@@ -345,3 +412,50 @@ let render_to_string (root : node) : string =
   let c = compile_node root in
   if c.css = "" then c.html
   else Printf.sprintf "<style>%s</style>%s" c.css c.html
+
+(* static analyzer for the Vite-like `quartz check` CLI tool *)
+type diag_report = {
+  element_count : int;
+  handler_count : int;
+  scoped_css_count : int;
+  internal_links : string list;
+  a11y_warnings : string list;
+}
+
+let diagnose (root : node) : diag_report =
+  let els = ref 0 in
+  let hnds = ref 0 in
+  let css_n = ref 0 in
+  let links = ref [] in
+  let warns = ref [] in
+  let rec scan = function
+    | Empty | Text _ | Raw_html _ -> ()
+    | Fragment ks -> List.iter scan ks
+    | Dynamic fn -> scan (fn ())
+    | El { tag; style; attrs; kids; _ } ->
+      incr els;
+      let _, _, extra = Style.compile_styles ~cls_prefix:"diag" style in
+      css_n := !css_n + List.length extra;
+      let has_alt = ref false in
+      List.iter
+        (function
+          | Handler _ -> incr hnds
+          | Attr ("href", u) when String.length u > 0 && u.[0] = '/' ->
+            if not (List.mem u !links) then links := u :: !links
+          | Attr ("alt", a) when String.trim a <> "" -> has_alt := true
+          | _ -> ())
+        attrs;
+      if tag = "img" && not !has_alt then
+        warns := "<img> element is missing a non-empty alt attribute" :: !warns;
+      if tag = "button" && kids = [] then
+        warns := "<button> element has no label or child nodes" :: !warns;
+      List.iter scan kids
+  in
+  scan root;
+  {
+    element_count = !els;
+    handler_count = !hnds;
+    scoped_css_count = !css_n;
+    internal_links = List.rev !links;
+    a11y_warnings = List.rev !warns;
+  }

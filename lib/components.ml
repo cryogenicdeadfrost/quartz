@@ -55,12 +55,13 @@ let btn ?(variant = Primary) ?(disabled = false) ?on_click label_txt =
         border ~width:0 ();
         cursor_pointer;
         transition_all;
-        hover [ bg hover_bg ];
+        hover [ bg hover_bg; translate_y (-1) ];
+        active [ scale 0.98 ];
       ]
     ~label:label_txt
     []
 
-let card ?title ?subtitle ?right ?footer ?(style = []) kids =
+let card ?title ?subtitle ?right ?footer ?(spotlight = false) ?(style = []) kids =
   let header_node =
     match title, subtitle, right with
     | None, None, None -> Dom.empty
@@ -87,7 +88,9 @@ let card ?title ?subtitle ?right ?footer ?(style = []) kids =
     | Some f ->
       Dom.div ~style:[ pt 12; mt 12; border_t ~color:Palette.slate_800 () ] [ f ]
   in
+  let attrs = if spotlight then [ Dom.attr "data-q-spotlight" "1" ] else [] in
   Dom.div
+    ~attrs
     ~style:
       ([
          flex_col;
@@ -96,18 +99,22 @@ let card ?title ?subtitle ?right ?footer ?(style = []) kids =
          bg Palette.slate_900;
          border ~width:1 ~color:Palette.slate_800 ();
          shadow_md;
+         transition_all;
        ]
       @ style)
     ([ header_node ] @ kids @ [ footer_node ])
+
+(* Interactive card with 60fps cursor-following radial spotlight & spring hover lift *)
+let spotlight_card ?title ?subtitle ?right ?footer ?(style = []) kids =
+  card ?title ?subtitle ?right ?footer ~spotlight:true ~style:(hover_lift :: style) kids
 
 let stat_card ~label ~value ?delta ?(positive = true) () =
   let delta_node =
     match delta with
     | None -> Dom.empty
-    | Some d ->
-      badge ~variant:(if positive then Success else Danger) d
+    | Some d -> badge ~variant:(if positive then Success else Danger) d
   in
-  card
+  spotlight_card
     ~style:[ gap 8 ]
     [
       Dom.div
@@ -141,16 +148,48 @@ let modal ~(open_sig : bool Signal.t) ~title ?footer body =
             flex_col;
             items_center;
             justify_center;
-            bg (`Rgba (2, 6, 23, 0.75));
-            backdrop_blur 4;
+            bg (`Rgba (2, 6, 23, 0.78));
+            backdrop_blur 6;
+            animate_fade_in;
           ]
         [
           card
             ~title
             ~right:(btn ~variant:Neutral ~on_click:(fun () -> Signal.set open_sig false) "Close")
             ?footer
-            ~style:[ w_px 480; max_w 520; shadow_xl ]
+            ~style:[ w_px 480; max_w 520; shadow_xl; animate_slide_up ]
             body;
+        ])
+
+(* Slide-over right-hand drawer sheet *)
+let drawer ~(open_sig : bool Signal.t) ~title body =
+  Dom.show
+    ~when_:(fun () -> Signal.get open_sig)
+    (fun () ->
+      Dom.div
+        ~style:[ fixed; inset_0; z_index 50; flex_row; justify_end; bg (`Rgba (2, 6, 23, 0.65)); backdrop_blur 4 ]
+        [
+          Dom.div
+            ~style:
+              [
+                w_px 400;
+                h_full;
+                p 24;
+                flex_col;
+                gap 16;
+                bg Palette.slate_900;
+                border ~width:1 ~color:Palette.slate_800 ();
+                shadow_xl;
+              ]
+            [
+              Dom.div
+                ~style:[ flex_row; justify_between; items_center; pb 14; border_b ~color:Palette.slate_800 () ]
+                [
+                  Dom.h3 ~style:[ text_lg; font_bold; m 0 ] [ Dom.text title ];
+                  btn ~variant:Neutral ~on_click:(fun () -> Signal.set open_sig false) "✕";
+                ];
+              Dom.div ~style:[ flex_col; gap 12; overflow_y_auto ] body;
+            ];
         ])
 
 let tabs ~initial (items : (string * string * (unit -> Dom.node)) list) =
@@ -174,6 +213,7 @@ let tabs ~initial (items : (string * string * (unit -> Dom.node)) list) =
                    text_sm;
                    font_medium;
                    cursor_pointer;
+                   transition_all;
                    border ~width:0 ();
                    bg (if is_cur then Palette.sky_500 else Palette.slate_800);
                    color (if is_cur then Palette.white else Palette.slate_300);
@@ -188,25 +228,194 @@ let tabs ~initial (items : (string * string * (unit -> Dom.node)) list) =
     in
     Dom.div ~style:[ flex_col; w_full ] [ bar; panel ])
 
+(* Collapsible multi-item accordion *)
+let accordion (sections : (string * string * Dom.node) list) =
+  let open_id : string option Signal.t =
+    match sections with (id, _, _) :: _ -> Signal.make (Some id) | [] -> Signal.make None
+  in
+  Dom.rx (fun () ->
+    let cur = Signal.get open_id in
+    Dom.div
+      ~style:[ flex_col; gap 8; w_full ]
+      (List.map
+         (fun (id, title_txt, content) ->
+           let is_open = cur = Some id in
+           Dom.div
+             ~style:[ flex_col; rounded_lg; bg Palette.slate_900; border ~width:1 ~color:Palette.slate_800 () ]
+             [
+               Dom.button
+                 ~on_click:(fun () -> Signal.set open_id (if is_open then None else Some id))
+                 ~style:
+                   [
+                     flex_row;
+                     justify_between;
+                     items_center;
+                     w_full;
+                     p 14;
+                     bg Palette.transparent;
+                     color Palette.white;
+                     border ~width:0 ();
+                     cursor_pointer;
+                     font_semibold;
+                     text_sm;
+                   ]
+                 [
+                   Dom.span [ Dom.text title_txt ];
+                   Dom.span ~style:[ color Palette.sky_400 ] [ Dom.text (if is_open then "−" else "+") ];
+                 ];
+               (if is_open then
+                  Dom.div ~style:[ px 14; pb 14; text_sm; color Palette.slate_300 ] [ content ]
+                else Dom.empty);
+             ])
+         sections))
+
+(* Animated pill switch toggle *)
+let switch_toggle ~label (sig_b : bool Signal.t) =
+  Dom.rx (fun () ->
+    let on = Signal.get sig_b in
+    Dom.div
+      ~style:[ flex_row; items_center; justify_between; gap 12 ]
+      [
+        Dom.span ~style:[ text_sm; color Palette.slate_200 ] [ Dom.text label ];
+        Dom.button
+          ~on_click:(fun () -> Signal.set sig_b (not on))
+          ~style:
+            [
+              w_px 44;
+              h_px 24;
+              p 2;
+              rounded_full;
+              border ~width:0 ();
+              cursor_pointer;
+              transition_all;
+              flex_row;
+              items_center;
+              (if on then justify_end else justify_start);
+              bg (if on then Palette.emerald_500 else Palette.slate_700);
+            ]
+          [
+            Dom.span ~style:[ w_px 20; h_px 20; rounded_full; bg Palette.white; shadow_sm ] [];
+          ];
+      ])
+
+(* Fluid progress bar *)
+let progress_bar ?(color = Palette.sky_500) ~label ~pct () =
+  let clamped = Float.max 0.0 (Float.min 100.0 pct) in
+  Dom.div
+    ~style:[ flex_col; gap 6; w_full ]
+    [
+      Dom.div
+        ~style:[ flex_row; justify_between; text_xs; Style.color Palette.slate_300 ]
+        [ Dom.span [ Dom.text label ]; Dom.span ~style:[ font_mono ] [ Dom.textf "%.0f%%" clamped ] ];
+      Dom.div
+        ~style:[ w_full; h_px 8; rounded_full; bg Palette.slate_800; overflow_hidden ]
+        [
+          Dom.div ~style:[ w_pct clamped; h_full; rounded_full; bg color; transition_all ] [];
+        ];
+    ]
+
+(* Interactive range slider bound to an int Signal.t *)
+let slider ~label ~min ~max (sig_v : int Signal.t) =
+  Dom.rx (fun () ->
+    let cur = Signal.get sig_v in
+    Dom.div
+      ~style:[ flex_col; gap 6; w_full ]
+      [
+        Dom.div
+          ~style:[ flex_row; justify_between; items_center ]
+          [
+            Dom.span ~style:[ text_sm; color Palette.slate_300 ] [ Dom.text label ];
+            badge ~variant:Primary (string_of_int cur);
+          ];
+        Dom.input
+          ~name:label
+          ~type_:"range"
+          ~min:(string_of_int min)
+          ~max:(string_of_int max)
+          ~value:(string_of_int cur)
+          ~style:[ w_full; cursor_pointer ]
+          ~on_change:(fun s ->
+            match int_of_string_opt s with
+            | Some n -> Signal.set sig_v n
+            | None -> ())
+          ();
+      ])
+
+(* Reactive Toast Notification System *)
+type toast_msg = {
+  id : int;
+  title : string;
+  variant : variant;
+}
+
+let active_toasts : toast_msg list Signal.t = Signal.make []
+let next_toast_id = ref 1
+
+let push_toast ?(variant = Success) title =
+  let id = !next_toast_id in
+  incr next_toast_id;
+  let cur = Signal.peek active_toasts in
+  let trimmed = List.filteri (fun i _ -> i < 3) cur in
+  Signal.set active_toasts ({ id; title; variant } :: trimmed)
+
+let dismiss_toast id =
+  Signal.update active_toasts (List.filter (fun (t : toast_msg) -> t.id <> id))
+
+let toast_rack () =
+  Dom.rx (fun () ->
+    let items = Signal.get active_toasts in
+    if items = [] then Dom.empty
+    else
+      Dom.div
+        ~style:[ fixed; bottom 20; right 20; z_index 60; flex_col; gap 10; w_px 320 ]
+        (List.map
+           (fun (t : toast_msg) ->
+             let border_c, text_c, _ = variant_colors t.variant in
+             Dom.div
+               ~style:
+                 [
+                   flex_row;
+                   justify_between;
+                   items_center;
+                   p 14;
+                   rounded_xl;
+                   glass;
+                   border ~width:1 ~color:border_c ();
+                   shadow_xl;
+                   animate_slide_up;
+                 ]
+               [
+                 Dom.span ~style:[ text_sm; font_semibold; color text_c ] [ Dom.text t.title ];
+                 Dom.button
+                   ~label:"✕"
+                   ~on_click:(fun () -> dismiss_toast t.id)
+                   ~style:[ bg Palette.transparent; color Palette.slate_400; border ~width:0 (); cursor_pointer ]
+                   [];
+               ])
+           items))
+
 let navbar ~brand ?right (links : (string * string) list) =
   Dom.header
     ~style:
       [
+        sticky;
+        top 0;
+        z_index 40;
         flex_row;
         justify_between;
         items_center;
-        px 24;
+        px 28;
         py 14;
-        bg Palette.slate_900;
+        glass;
         border_b ~color:Palette.slate_800 ();
       ]
     [
       Dom.div
-        ~style:[ flex_row; items_center; gap 24 ]
+        ~style:[ flex_row; items_center; gap 28 ]
         [
           Dom.span ~style:[ text_xl; font_bold; color Palette.sky_400 ] [ Dom.text brand ];
           Dom.nav
-            ~style:[ flex_row; gap 16 ]
+            ~style:[ flex_row; gap 18 ]
             (List.map
                (fun (href, lbl) ->
                  Router.link ~to_:href ~style:[ text_sm; color Palette.slate_300 ] [ Dom.text lbl ])
@@ -237,7 +446,7 @@ let data_table ~columns ~rows =
             (List.map
                (fun r ->
                  Dom.tr
-                   ~style:[ hover [ bg Palette.slate_800 ]; border_b ~color:Palette.slate_800 () ]
+                   ~style:[ hover [ bg Palette.slate_800 ]; border_b ~color:Palette.slate_800 (); transition_all ]
                    (List.map
                       (fun (_, render_cell) ->
                         Dom.td ~style:[ p 12; color Palette.slate_200 ] [ render_cell r ])
@@ -246,52 +455,22 @@ let data_table ~columns ~rows =
         ];
     ]
 
-(* pure SVG sparkline so you don't need 400KB of Chart.js just to draw a trendline *)
-let sparkline ?(width = 240) ?(height = 56) ?(stroke = "#38bdf8") (values : float list) =
-  match values with
-  | [] | [ _ ] -> Dom.empty
-  | _ ->
-    let min_v = List.fold_left Float.min Float.infinity values in
-    let max_v = List.fold_left Float.max Float.neg_infinity values in
-    let span = Float.max 1e-6 (max_v -. min_v) in
-    let n = List.length values in
-    let wf = float_of_int width and hf = float_of_int height in
-    let pad = 4.0 in
-    let pts =
-      List.mapi
-        (fun i v ->
-          let x = (float_of_int i /. float_of_int (n - 1)) *. wf in
-          let norm = (v -. min_v) /. span in
-          let y = hf -. pad -. (norm *. (hf -. (2.0 *. pad))) in
-          (x, y))
-        values
-    in
-    Dom.svg
-      ~view_box:(Printf.sprintf "0 0 %d %d" width height)
-      ~width:(Printf.sprintf "%dpx" width)
-      ~height:(Printf.sprintf "%dpx" height)
-      [ Dom.svg_polyline ~points:pts ~stroke ~stroke_width:2.2 () ]
+let code_block ~lang code_str =
+  Dom.div
+    ~style:[ flex_col; rounded_lg; bg Palette.slate_950; border ~width:1 ~color:Palette.slate_800 (); overflow_hidden ]
+    [
+      Dom.div
+        ~style:[ flex_row; justify_between; items_center; px 12; py 6; bg Palette.slate_900; border_b ~color:Palette.slate_800 () ]
+        [
+          Dom.span ~style:[ text_xs; font_mono; color Palette.sky_400 ] [ Dom.text lang ];
+          Dom.span ~style:[ text_xs; color Palette.slate_500 ] [ Dom.text "OCaml Native" ];
+        ];
+      Dom.pre ~style:[ p 14; m 0; font_mono; text_xs; color Palette.slate_200; overflow_x_auto ] [ Dom.code [ Dom.text code_str ] ];
+    ]
 
-let bar_chart ?(width = 320) ?(height = 120) ?(fill = "#38bdf8") (bars : (string * float) list) =
-  match bars with
-  | [] -> Dom.empty
-  | _ ->
-    let max_v = List.fold_left (fun acc (_, v) -> Float.max acc v) 1e-6 bars in
-    let n = List.length bars in
-    let wf = float_of_int width and hf = float_of_int height in
-    let slot_w = wf /. float_of_int n in
-    let bar_w = Float.max 4.0 (slot_w *. 0.7) in
-    let rects =
-      List.mapi
-        (fun i (_, v) ->
-          let h = Float.max 2.0 ((v /. max_v) *. (hf -. 12.0)) in
-          let x = (float_of_int i *. slot_w) +. ((slot_w -. bar_w) /. 2.0) in
-          let y = hf -. h in
-          Dom.svg_rect ~x ~y ~width:bar_w ~height:h ~rx:3.0 ~fill ())
-        bars
-    in
-    Dom.svg
-      ~view_box:(Printf.sprintf "0 0 %d %d" width height)
-      ~width:(Printf.sprintf "%dpx" width)
-      ~height:(Printf.sprintf "%dpx" height)
-      rects
+let sparkline = Charts.sparkline
+let area_chart = Charts.area_chart
+let bar_chart = Charts.bar_chart
+let donut_ring = Charts.donut_ring
+let multi_line_chart = Charts.multi_line_chart
+let heatmap = Charts.heatmap

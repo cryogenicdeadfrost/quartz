@@ -2,4 +2,4 @@
  (name quartz)
  (public_name quartz)
  (libraries unix)
- (modules signal style dom router form components tui server quartz))
+ (modules signal style dom router form charts components tui server quartz))

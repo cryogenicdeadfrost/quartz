@@ -20,6 +20,7 @@ module Palette = struct
   let slate_300 = `Hex "#cbd5e1"
   let slate_400 = `Hex "#94a3b8"
   let slate_500 = `Hex "#64748b"
+  let slate_600 = `Hex "#475569"
   let slate_700 = `Hex "#334155"
   let slate_800 = `Hex "#1e293b"
   let slate_900 = `Hex "#0f172a"
@@ -28,8 +29,10 @@ module Palette = struct
   let sky_400 = `Hex "#38bdf8"
   let sky_500 = `Hex "#0ea5e9"
   let sky_600 = `Hex "#0284c7"
+  let indigo_400 = `Hex "#818cf8"
   let indigo_500 = `Hex "#6366f1"
   let indigo_600 = `Hex "#4f46e5"
+  let violet_500 = `Hex "#8b5cf6"
   let emerald_400 = `Hex "#34d399"
   let emerald_500 = `Hex "#10b981"
   let emerald_600 = `Hex "#059669"
@@ -70,6 +73,7 @@ let grid_cols n =
 let grid_rows n =
   Kv ("grid-template-rows", Printf.sprintf "repeat(%d,minmax(0,1fr))" n)
 let col_span n = Kv ("grid-column", Printf.sprintf "span %d / span %d" n n)
+let row_span n = Kv ("grid-row", Printf.sprintf "span %d / span %d" n n)
 
 let gap px = Kv ("gap", Printf.sprintf "%dpx" px)
 let gap_x px = Kv ("column-gap", Printf.sprintf "%dpx" px)
@@ -88,7 +92,6 @@ let items_end = Kv ("align-items", "flex-end")
 let items_baseline = Kv ("align-items", "baseline")
 let items_stretch = Kv ("align-items", "stretch")
 
-(* alias because I always forget whether it's align_center or items_center *)
 let align_center = items_center
 let align_start = items_start
 let align_end = items_end
@@ -141,7 +144,7 @@ let overflow_auto = Kv ("overflow", "auto")
 let overflow_x_auto = Kv ("overflow-x", "auto")
 let overflow_y_auto = Kv ("overflow-y", "auto")
 
-(* colors, borders, shadows *)
+(* colors, borders, shadows & glassmorphism *)
 let color c = Kv ("color", color_to_css c)
 let bg c = Kv ("background-color", color_to_css c)
 let bg_gradient ~dir ~from_ ~to_ =
@@ -152,6 +155,9 @@ let bg_gradient ~dir ~from_ ~to_ =
     | `To_b -> "to bottom"
   in
   Kv ("background-image", Printf.sprintf "linear-gradient(%s, %s, %s)" d (color_to_css from_) (color_to_css to_))
+
+let glass =
+  Kv ("background-color", "rgba(15,23,42,0.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)")
 
 let border ?(width = 1) ?(color = Palette.slate_700) () =
   Kv ("border", Printf.sprintf "%dpx solid %s" width (color_to_css color))
@@ -173,6 +179,7 @@ let shadow_sm = Kv ("box-shadow", "0 1px 2px 0 rgba(0,0,0,0.25)")
 let shadow_md = Kv ("box-shadow", "0 4px 6px -1px rgba(0,0,0,0.3)")
 let shadow_lg = Kv ("box-shadow", "0 10px 15px -3px rgba(0,0,0,0.35)")
 let shadow_xl = Kv ("box-shadow", "0 20px 25px -5px rgba(0,0,0,0.45)")
+let shadow_glow c = Kv ("box-shadow", Printf.sprintf "0 0 24px -4px %s" (color_to_css c))
 let opacity f = Kv ("opacity", Printf.sprintf "%.2f" f)
 let backdrop_blur px = Kv ("backdrop-filter", Printf.sprintf "blur(%dpx)" px)
 
@@ -200,18 +207,26 @@ let italic = Kv ("font-style", "italic")
 let underline = Kv ("text-decoration", "underline")
 let no_underline = Kv ("text-decoration", "none")
 let uppercase = Kv ("text-transform", "uppercase")
+let lowercase = Kv ("text-transform", "lowercase")
+let capitalize = Kv ("text-transform", "capitalize")
 let tracking_wide = Kv ("letter-spacing", "0.05em")
 let text_left = Kv ("text-align", "left")
 let text_center = Kv ("text-align", "center")
 let text_right = Kv ("text-align", "right")
 let truncate = Kv ("overflow", "hidden;text-overflow:ellipsis;white-space:nowrap")
 
-(* interactions & pseudo-states *)
+(* interactions, physics & animations *)
 let cursor_pointer = Kv ("cursor", "pointer")
 let cursor_not_allowed = Kv ("cursor", "not-allowed")
 let select_none = Kv ("user-select", "none")
-let transition_all = Kv ("transition", "all 150ms cubic-bezier(0.4, 0, 0.2, 1)")
+let transition_all = Kv ("transition", "all 180ms cubic-bezier(0.22, 1, 0.36, 1)")
+let transition_spring = Kv ("transition", "transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 220ms ease")
 let scale s = Kv ("transform", Printf.sprintf "scale(%.2f)" s)
+let translate_y px = Kv ("transform", Printf.sprintf "translateY(%dpx)" px)
+
+let animate_fade_in = Kv ("animation", "q_fade_in 260ms cubic-bezier(0.22,1,0.36,1) both")
+let animate_slide_up = Kv ("animation", "q_slide_up 320ms cubic-bezier(0.22,1,0.36,1) both")
+let animate_pulse = Kv ("animation", "q_pulse 2s cubic-bezier(0.4,0,0.6,1) infinite")
 
 let hover rules = Hover rules
 let focus rules = Focus rules
@@ -221,6 +236,10 @@ let sm rules = Media (640, rules)
 let md rules = Media (768, rules)
 let lg rules = Media (1024, rules)
 let xl rules = Media (1280, rules)
+
+(* 1-liner spring hover lift for cards & buttons *)
+let hover_lift =
+  Hover [ translate_y (-3); shadow_xl; border ~width:1 ~color:Palette.sky_500 () ]
 
 let kvs_to_css_body styles =
   let buf = Buffer.create 64 in
@@ -235,7 +254,6 @@ let kvs_to_css_body styles =
     styles;
   Buffer.contents buf
 
-(* splits a style list into (inline_style_string, extra_scoped_css_rules_for_head) *)
 let compile_styles ~cls_prefix styles =
   let inline_str = kvs_to_css_body styles in
   let scoped_rules = ref [] in
