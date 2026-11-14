@@ -6,9 +6,10 @@ let client_runtime_js =
 (function() {
   async function sendEvent(id, val) {
     try {
+      const rootEl = document.getElementById('quartz-root');
       const active = document.activeElement;
-      const activeTag = active ? active.tagName : null;
-      const activeName = active ? active.getAttribute('name') || active.id : null;
+      const allCtrls = rootEl ? Array.from(rootEl.querySelectorAll('input,textarea,select')) : [];
+      const activeIdx = allCtrls.indexOf(active);
       const selStart = (active && typeof active.selectionStart === 'number') ? active.selectionStart : null;
 
       const res = await fetch('/__quartz_event', {
@@ -20,15 +21,15 @@ let client_runtime_js =
       const payload = await res.json();
       const styleEl = document.getElementById('quartz-styles');
       if (styleEl && payload.css !== undefined) styleEl.textContent = payload.css;
-      const rootEl = document.getElementById('quartz-root');
       if (rootEl && payload.html !== undefined) {
         rootEl.innerHTML = payload.html;
-        if (activeName) {
-          const nextEl = document.querySelector('[name="' + activeName + '"], #' + activeName);
+        if (activeIdx >= 0) {
+          const nextCtrls = Array.from(rootEl.querySelectorAll('input,textarea,select'));
+          const nextEl = nextCtrls[activeIdx];
           if (nextEl) {
             nextEl.focus();
             if (selStart !== null && typeof nextEl.setSelectionRange === 'function') {
-              nextEl.setSelectionRange(selStart, selStart);
+              try { nextEl.setSelectionRange(selStart, selStart); } catch (_) {}
             }
           }
         }

@@ -82,6 +82,7 @@ let view_input ~label ?placeholder ?(type_ = "text") (f : 'a field) =
           ~style:Style.[ text_sm; font_medium; color Palette.slate_300 ]
           [ Dom.text label ];
         Dom.input
+          ~name:label
           ~type_
           ~value:cur
           ?placeholder

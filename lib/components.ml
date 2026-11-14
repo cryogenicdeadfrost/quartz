@@ -149,7 +149,7 @@ let modal ~(open_sig : bool Signal.t) ~title ?footer body =
             ~title
             ~right:(btn ~variant:Neutral ~on_click:(fun () -> Signal.set open_sig false) "Close")
             ?footer
-            ~style:[ w_px 480; max_w 92; shadow_xl ]
+            ~style:[ w_px 480; max_w 520; shadow_xl ]
             body;
         ])
 
