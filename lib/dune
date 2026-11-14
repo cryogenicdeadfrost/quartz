@@ -1,4 +1,5 @@
 (library
  (name quartz)
  (public_name quartz)
- (modules signal style dom router form components tui quartz))
+ (libraries unix)
+ (modules signal style dom router form components tui server quartz))

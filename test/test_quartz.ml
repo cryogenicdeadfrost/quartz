@@ -120,10 +120,24 @@ let test_router_form_components_tui () =
   (* 4. Flexbox TUI Renderer *)
   let tui_str = Tui.render_tui ~width:60 ~height:12 dash in
   check "TUI frame contains title" (has_sub tui_str "Revenue");
-  check "TUI frame contains value" (has_sub tui_str "$42,500")
+  check "TUI frame contains value" (has_sub tui_str "$42,500");
+
+  (* 5. Full LiveView Document & Event Dispatch *)
+  let count_s, set_s = use_state 10 in
+  let live_app () =
+    div [
+      rx_text (fun () -> Printf.sprintf "Val=%d" !~count_s);
+      btn ~on_click:(fun () -> set_s (!~count_s + 5)) "Add5";
+    ]
+  in
+  let doc, compiled = Server.render_full_document ~title:"TestLive" ~live:true (live_app ()) in
+  check "Full HTML doc has DOCTYPE" (has_sub doc "<!DOCTYPE html>");
+  check "Full HTML doc has Val=10" (has_sub doc "Val=10");
+  Hashtbl.iter (fun id _ -> ignore (Server.dispatch_handler compiled.handlers ~id ~raw_val:"")) compiled.handlers;
+  check "Dispatched server handler updated signal to 15" (!~count_s = 15)
 
 let () =
   test_signals ();
   test_dom_and_styles ();
   test_router_form_components_tui ();
-  Printf.printf "[OK] Quartz Iteration 2 (Router, Form, UI Kit, SVG Charts & Flexbox TUI) passed.\n%!"
+  Printf.printf "[OK] Quartz Iteration 3 (Full LiveView Server, Router, Form, UI Kit & TUI) passed.\n%!"
