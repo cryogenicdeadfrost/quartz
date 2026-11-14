@@ -75,7 +75,55 @@ let test_dom_and_styles () =
     compiled.handlers;
   check "Registered click callback executed" !clicked
 
+let test_router_form_components_tui () =
+  (* 1. Router dynamic :param matching *)
+  let view =
+    Router.router
+      [
+        Router.route "/" (fun _ -> Dom.text "Home Page");
+        Router.route "/users/:uid/tab/:tab" (fun ps ->
+          let u = Option.value ~default:"?" (Router.param "uid" ps) in
+          let t = Option.value ~default:"?" (Router.param "tab" ps) in
+          Dom.textf "User=%s Tab=%s" u t);
+      ]
+  in
+  Router.navigate "/";
+  check "Router home route" (has_sub (Dom.render_to_string view) "Home Page");
+  Router.navigate "/users/42/tab/billing";
+  check "Router param extraction" (has_sub (Dom.render_to_string view) "User=42 Tab=billing");
+  Router.navigate "/nonexistent/route";
+  check "Router 404 fallback" (has_sub (Dom.render_to_string view) "404");
+
+  (* 2. Form validation *)
+  let email_f = Form.create_field Form.email in
+  check "Untouched field has no visible error" (Form.error email_f = None);
+  Form.set_value email_f "bad-email";
+  check "Invalid email reports error" (Option.is_some (Form.error email_f));
+  Form.set_value email_f "dev@ocaml.org";
+  check "Valid email passes" (Form.error email_f = None && Form.validate email_f = Ok "dev@ocaml.org");
+
+  (* 3. UI Components & SVG charts *)
+  let dash =
+    Components.card
+      ~title:"Revenue"
+      [
+        Components.stat_card ~label:"MRR" ~value:"$42,500" ~delta:"+18.4%" ();
+        Components.sparkline [ 10.0; 15.0; 12.0; 22.0; 30.0 ];
+        Components.bar_chart [ ("Q1", 10.0); ("Q2", 25.0); ("Q3", 40.0) ];
+      ]
+  in
+  let dash_html = Dom.render_to_string dash in
+  check "Stat card rendered" (has_sub dash_html "$42,500");
+  check "Sparkline polyline rendered" (has_sub dash_html "<polyline");
+  check "Bar chart rects rendered" (has_sub dash_html "<rect");
+
+  (* 4. Flexbox TUI Renderer *)
+  let tui_str = Tui.render_tui ~width:60 ~height:12 dash in
+  check "TUI frame contains title" (has_sub tui_str "Revenue");
+  check "TUI frame contains value" (has_sub tui_str "$42,500")
+
 let () =
   test_signals ();
   test_dom_and_styles ();
-  Printf.printf "[OK] Quartz Iteration 1 (Signal graph, Atomic CSS & DOM compiler) passed.\n%!"
+  test_router_form_components_tui ();
+  Printf.printf "[OK] Quartz Iteration 2 (Router, Form, UI Kit, SVG Charts & Flexbox TUI) passed.\n%!"
