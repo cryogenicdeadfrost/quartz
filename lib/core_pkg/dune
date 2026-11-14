@@ -1,0 +1,32 @@
+(library
+ (name quartz_core)
+ (public_name quartz.core)
+ (libraries)
+ (modules
+  io
+  json
+  crypto_util
+  cookie
+  i18n
+  signal
+  resource
+  contrast
+  style
+  scene3d
+  dom
+  headless
+  router
+  form
+  charts
+  components
+  middleware
+  isr
+  pubsub
+  websocket
+  multipart
+  http
+  store
+  jobs
+  tui
+  custom_renderer
+  app))

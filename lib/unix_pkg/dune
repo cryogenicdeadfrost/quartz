@@ -1,0 +1,5 @@
+(library
+ (name quartz_unix)
+ (public_name quartz.unix)
+ (libraries quartz.core quartz.browser quartz.edge quartz.mirage unix threads)
+ (modules unix_adapters server deploy import_html vite))

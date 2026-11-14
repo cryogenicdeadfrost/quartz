@@ -1,0 +1,11 @@
+(library
+ (name quartz)
+ (public_name quartz)
+ (libraries
+  quartz.core
+  quartz.browser
+  quartz.edge
+  quartz.mirage
+  quartz.vercel
+  quartz.unix)
+ (modules quartz))

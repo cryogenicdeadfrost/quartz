@@ -24,7 +24,7 @@ let setup_backend () =
   use_middleware (Middleware.rate_cop ~max_burst:120.0 ~refill_per_sec:30.0 ());
 
   api_get "/api/health" (fun _params ->
-    {|{"status":"ok","engine":"quartz-v3","subsystems":["core","style","frontend","backend","renderers","tooling"]}|});
+    {|{"status":"ok","engine":"quartz-v4","subsystems":["core","browser","edge","mirage","vercel","unix"]}|});
   api_get "/api/metrics" (fun _params ->
     let isr_st = Isr.get_stats () in
     Printf.sprintf
@@ -115,7 +115,7 @@ let app_shell child_view =
     ~style:Style.[ h_screen; bg Palette.slate_950; color Palette.slate_100 ]
     [
       navbar
-        ~brand:"Quartz v3.0"
+        ~brand:"Quartz v4.0"
         ~right:
           (div ~style:Style.[ flex_row; items_center; gap 10 ] [
              avatar ~initials:"AB" ~online:true ();
@@ -126,7 +126,8 @@ let app_shell child_view =
           ("/", "Overview");
           ("/analytics", "Telemetry & Charts");
           ("/components", "Kanban & Lab");
-          ("/network", "Middleware & Renderers");
+          ("/network", "Middleware & 3D");
+          ("/cluster/us-east/4", "Typed GADT Route");
         ];
       div
         ~style:Style.[ max_w 1200; mx_auto; px 28; pt 16 ]
@@ -187,9 +188,9 @@ let overview_page _ =
                     contrast_badge ~bg_color:Palette.sky_400 "4 CUSTOM RENDERERS";
                   ];
                   h1 ~style:Style.[ text_4xl; bold; m 0; color Palette.white ]
-                    [ text "Quartz v3.0 Reactive Platform & Multi-Renderer" ];
+                    [ text "Quartz v4.0 Reactive Platform & Universal Runtime" ];
                   p ~style:Style.[ text_base; color Palette.slate_300; m 0 ]
-                    [ text "Featuring fine-grained Signals, WCAG 2.1 luminance math, Express/Nest-style Middleware, ISR, SSE, and Canvas2D/Markdown/TUI/HTML renderers." ];
+                    [ text "One OCaml core targeting Native Unix, MirageOS Unikernels, Vercel, Cloudflare Workers, Scene3d WebGL2 & Headless WAI-ARIA UI." ];
                 ];
               div
                 ~style:Style.[ flex_col; gap 10; items_end ]
@@ -597,7 +598,7 @@ let network_page _ =
             ~subtitle:"Render the exact same UI tree to HTML, TUI, Canvas2D, Markdown & JSON"
             [
               code_block ~lang:"bash"
-                "dune exec quartz -- check     # 5-stage Doctor + WCAG Contrast Audit\ndune exec quartz -- build     # Static HTML/CSS + sitemap.xml + manifest\ndune exec quartz -- tui       # ANSI Flexbox Terminal UI\ndune exec quartz -- markdown  # GitHub-Flavored Markdown Exporter\ndune exec quartz -- canvas    # HTML5 Canvas2D GPU Draw Call Buffer";
+                "dune exec quartz -- check     # 5-stage Doctor + WCAG/APCA Audit\ndune exec quartz -- build     # Static HTML/CSS + sitemap.xml + llms.txt\ndune exec quartz -- dev 8080 --hmr # Multi-threaded HTTP/1.1 + WS + HMR\ndune exec quartz -- deploy vercel   # Generate Vercel / Cloudflare / Fly / Mirage\ndune exec quartz -- import-html f.html # HTML+Tailwind -> OCaml Codegen";
               div ~style:Style.[ flex_row; gap 10; mt 12 ] [
                 link ~to_:"/service/edge-auth-proxy"
                   ~style:Style.[ px 14; py 8; rounded_lg; bg Palette.sky_600; color Palette.white; text_sm; bold ]
@@ -605,6 +606,72 @@ let network_page _ =
                 link ~to_:"/analytics?region=eu-central"
                   ~style:Style.[ px 14; py 8; rounded_lg; bg Palette.slate_800; color Palette.slate_100; text_sm ]
                   [ text "Deep-Link EU Telemetry ->" ];
+                link ~to_:"/cluster/eu-west/12"
+                  ~style:Style.[ px 14; py 8; rounded_lg; bg Palette.emerald_600; color Palette.white; text_sm; bold ]
+                  [ text "Typed GADT Route ->" ];
+              ];
+            ];
+        ];
+      div
+        ~style:Style.[ grid_cols 2; gap 20 ]
+        [
+          spotlight_card
+            ~title:"Declarative Scene3d WebGL2 Canvas"
+            ~subtitle:"Zero-Unix pure OCaml 3D AST executed client-side at 60fps"
+            [
+              Dom.canvas3d ~width:520 ~height:240
+                (Scene3d.create
+                   ~lights:
+                     [
+                       Scene3d.ambient_light ~intensity:0.4 ();
+                       Scene3d.point_light ~color:"#38bdf8" ~intensity:1.3 ~pos:(2.5, 3.0, 4.0) ();
+                       Scene3d.directional_light ();
+                     ]
+                   [
+                     Scene3d.mesh
+                       ~name:"core-torus"
+                       ~geometry:(Scene3d.Torus { radius = 1.05; tube = 0.34 })
+                       ~material:(Scene3d.Pbr { color = "#38bdf8"; metalness = 0.7; roughness = 0.2; emissive = "#0369a1" })
+                       ();
+                     Scene3d.mesh
+                       ~name:"orbit-sphere"
+                       ~geometry:(Scene3d.Sphere { radius = 0.45; segments = 24 })
+                       ~material:(Scene3d.Pbr { color = "#34d399"; metalness = 0.4; roughness = 0.3; emissive = "#065f46" })
+                       ~pos:(1.8, 0.4, 0.0)
+                       ~spin:(0.8, 0.4, 0.6)
+                       ();
+                   ]);
+            ];
+          spotlight_card
+            ~title:"Headless WAI-ARIA Progressive UI Primitives"
+            ~subtitle:"Keyboard roving tabindex, native <details> accordion & OKLCH tokens"
+            [
+              Headless.tabs
+                ~group_id:"runtime-targets"
+                ~active_id:"unikernel"
+                ~bar_style:Style.[ flex_row; gap 8; mb 12 ]
+                ~tab_style:(fun is_active ->
+                  Style.[
+                    px 12;
+                    py 6;
+                    rounded_lg;
+                    text_sm;
+                    bold;
+                    bg (if is_active then Palette.sky_600 else Palette.slate_800);
+                    color Palette.white;
+                  ])
+                ~panel_style:Style.[ p 12; rounded_lg; bg Palette.slate_950; color Palette.slate_200; text_sm ]
+                [
+                  { Headless.id = "unikernel"; label = "MirageOS Unikernel"; panel = (fun () -> text "Compiles pure quartz.core directly into Xen/Solo5 microVM images with zero Unix.") };
+                  { Headless.id = "edge"; label = "Vercel / Cloudflare"; panel = (fun () -> text "Compiles the exact same App.Make functor to WinterCG Edge JS or AWS Lambda.") };
+                ];
+              div ~style:Style.[ mt 12 ] [
+                Headless.accordion_item
+                  ~open_:true
+                  ~summary_style:Style.[ text_sm; bold; color Palette.sky_400; cursor_pointer ]
+                  ~panel_style:Style.[ pt 8; text_sm; color Palette.slate_300 ]
+                  ~summary_kids:[ text "Zero-JS Progressive Disclosure (<details>)" ]
+                  [ text "Headless primitives work immediately on static HTML exports with full ARIA semantics." ];
               ];
             ];
         ];
@@ -634,20 +701,49 @@ let service_detail_page params =
         ];
     ]
 
+(* PAGE 6: Type-Safe GADT Route (/cluster/:region/:shard_id) *)
+let cluster_gadt_page region shard_id =
+  div
+    ~style:Style.[ flex_col; gap 20; p 28; max_w 960; mx_auto; animate_fade_in ]
+    [
+      div ~style:Style.[ flex_row; justify_between; items_center ] [
+        div ~style:Style.[ flex_col; gap 6 ] [
+          badge ~variant:Success "GADT TYPE-SAFE ROUTE";
+          h1 ~style:Style.[ text_3xl; bold; m 0 ]
+            [ textf "Cluster Region: %s | Shard #%d" region shard_id ];
+        ];
+        link ~to_:"/"
+          ~style:Style.[ px 14; py 8; rounded_lg; bg Palette.slate_800; color Palette.sky_400; text_sm; bold ]
+          [ text "<- Back to Control Plane" ];
+      ];
+      spotlight_card
+        ~title:"Compile-Time Verified Parameters"
+        ~subtitle:"Matched via Router.Path.(s \"cluster\" / str / int)"
+        [
+          p ~style:Style.[ text_sm; color Palette.slate_300; m 0 ]
+            [ textf "Region (%s : string) and Shard (%d : int) decoded cleanly without runtime string casting." region shard_id ];
+        ];
+    ]
+
 let app_routes =
   with_layout app_shell
     [
       route ~title:"Overview" "/" overview_page;
       route ~title:"Analytics" "/analytics" analytics_page;
       route ~title:"Kanban & Lab" "/components" components_page;
-      route ~title:"Middleware & Renderers" "/network" network_page;
+      route ~title:"Middleware & 3D" "/network" network_page;
       route ~title:"Services" "/service" overview_page;
       route ~title:"Service Detail" "/service/:id" service_detail_page;
+      route ~title:"Cluster Overview" "/cluster" overview_page;
+      route ~title:"Cluster Region" "/cluster/:region" (fun ps ->
+        let r = Option.value ~default:"us-east" (Router.param "region" ps) in
+        cluster_gadt_page r 0);
+      Router.gadt_route ~title:"Cluster Node" Router.Path.(s "cluster" @@ str @@ int nil) cluster_gadt_page;
     ]
 
 let studio_app () = Router.router app_routes
 
-let sample_paths = [ "/"; "/analytics"; "/components"; "/network"; "/service/edge-auth-proxy" ]
+let sample_paths = [ "/"; "/analytics"; "/components"; "/network"; "/service/edge-auth-proxy"; "/cluster/us-east/4" ]
 
 let static_export_specs =
   [
@@ -656,21 +752,89 @@ let static_export_specs =
     ("components.html", "/components", studio_app);
     ("network.html", "/network", studio_app);
     ("service-edge.html", "/service/edge-auth-proxy", studio_app);
+    ("cluster-us-east-4.html", "/cluster/us-east/4", studio_app);
   ]
+
+let read_whole_file path =
+  let ic = open_in_bin path in
+  let len = in_channel_length ic in
+  let buf = really_input_string ic len in
+  close_in ic;
+  buf
+
+let print_usage () =
+  print_endline
+    {|Quartz v4.0 CLI -- One OCaml Core, Many Targets
+
+Usage:
+  quartz dev [port] [--hmr]            Start LiveView HTTP/1.1 + WS + SSE dev server
+  quartz serve [port]                  Start HTTP server (default port 8080)
+  quartz check                         Run 5-stage Doctor (Routes, Links, WCAG + APCA, A11y)
+  quartz build                         Emit static HTML, CSS, hashed JS runtime, sitemap & llms.txt
+  quartz deploy <target> [out_dir]     Generate deployment artifacts:
+                                         pages | vercel | cloudflare | fly | mirage
+  quartz import-html <file.html>       Convert HTML + Tailwind classes into Quartz OCaml code
+  quartz new <saas|docs|api> <dir>     Scaffold a new Quartz v4 starter application
+  quartz tui | markdown | canvas | json Render `/` via alternate backend|}
 
 let () =
   setup_backend ();
   let args = Array.to_list Sys.argv in
   match args with
+  | _ :: ("--help" | "-h" | "help") :: _ ->
+    print_usage ()
+  | _ :: "dev" :: port_s :: "--hmr" :: _ ->
+    let port = Option.value ~default:8080 (int_of_string_opt port_s) in
+    let _stop_hmr = Vite.start_hmr_watcher () in
+    run_browser ~port ~title:"Quartz v4.0 Studio (HMR)" studio_app
+  | _ :: "dev" :: "--hmr" :: _ ->
+    let _stop_hmr = Vite.start_hmr_watcher () in
+    run_browser ~port:8080 ~title:"Quartz v4.0 Studio (HMR)" studio_app
   | _ :: ("dev" | "serve") :: port_s :: _ ->
     let port = Option.value ~default:8080 (int_of_string_opt port_s) in
-    run_browser ~port ~title:"Quartz v3.0 Studio" studio_app
+    run_browser ~port ~title:"Quartz v4.0 Studio" studio_app
   | _ :: ("dev" | "serve") :: _ ->
-    run_browser ~port:8080 ~title:"Quartz v3.0 Studio" studio_app
+    run_browser ~port:8080 ~title:"Quartz v4.0 Studio" studio_app
   | _ :: "check" :: _ ->
     run_vite_check ~port:8080 ~routes:app_routes ~sample_paths studio_app
   | _ :: "build" :: _ ->
-    run_vite_build ~out_dir:"dist_site" ~title:"Quartz v3.0 Studio" static_export_specs
+    run_vite_build ~out_dir:"dist_site" ~title:"Quartz v4.0 Studio" static_export_specs
+  | _ :: "deploy" :: target :: rest ->
+    let out_dir = match rest with d :: _ -> d | [] -> "deploy_out" in
+    (match String.lowercase_ascii target with
+     | "pages" ->
+       let f = Deploy.emit_github_pages ~out_dir () in
+       Printf.printf "[OK] Emitted GitHub Pages workflow -> %s\n" f
+     | "vercel" ->
+       let d = Deploy.emit_vercel_output ~out_dir () in
+       Printf.printf "[OK] Emitted Vercel Build Output v3 -> %s\n" d
+     | "cloudflare" | "cf" ->
+       let d = Deploy.emit_cloudflare_worker ~out_dir () in
+       Printf.printf "[OK] Emitted Cloudflare Worker + wrangler.toml -> %s\n" d
+     | "fly" | "docker" ->
+       let d = Deploy.emit_docker_and_fly ~out_dir () in
+       Printf.printf "[OK] Emitted static musl Dockerfile + fly.toml -> %s\n" d
+     | "mirage" | "unikernel" ->
+       let d = Deploy.emit_mirage ~out_dir () in
+       Printf.printf "[OK] Emitted MirageOS 4 config.ml + unikernel.ml -> %s\n" d
+     | other ->
+       Printf.eprintf "Unknown deploy target %S (expected pages|vercel|cloudflare|fly|mirage)\n" other;
+       exit 1)
+  | _ :: "import-html" :: file :: _ ->
+    let html = read_whole_file file in
+    print_endline (Import_html.convert_html_to_ocaml html)
+  | _ :: "new" :: tmpl :: dir :: _ ->
+    let template =
+      match String.lowercase_ascii tmpl with
+      | "saas" -> `Saas
+      | "docs" -> `Docs
+      | "api" -> `Api
+      | other ->
+        Printf.eprintf "Unknown template %S (expected saas|docs|api)\n" other;
+        exit 1
+    in
+    let out = Deploy.scaffold_project ~dir ~template in
+    Printf.printf "[OK] Scaffolded Quartz `%s` project in %s/\n" tmpl out
   | _ :: "tui" :: _ ->
     Router.navigate "/";
     run_terminal ~width:80 ~height:20 studio_app
@@ -686,7 +850,7 @@ let () =
   | _ ->
     (* Default showcase pipeline: run 5-stage Doctor, build static bundle + SEO assets, and render TUI *)
     run_vite_check ~port:8080 ~routes:app_routes ~sample_paths studio_app;
-    run_vite_build ~out_dir:"dist_site" ~title:"Quartz v3.0 Studio" static_export_specs;
+    run_vite_build ~out_dir:"dist_site" ~title:"Quartz v4.0 Studio" static_export_specs;
     Printf.printf "  >>> [TUI Renderer] Rendering `/` via Flexbox Terminal Canvas <<<\n";
     Router.navigate "/";
     run_terminal ~width:80 ~height:20 studio_app

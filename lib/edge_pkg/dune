@@ -1,0 +1,5 @@
+(library
+ (name quartz_edge)
+ (public_name quartz.edge)
+ (libraries quartz.core)
+ (modules edge_adapter))

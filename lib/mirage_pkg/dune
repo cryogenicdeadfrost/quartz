@@ -1,0 +1,5 @@
+(library
+ (name quartz_mirage)
+ (public_name quartz.mirage)
+ (libraries quartz.core)
+ (modules mirage_adapter))

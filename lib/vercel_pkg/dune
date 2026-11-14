@@ -1,0 +1,5 @@
+(library
+ (name quartz_vercel)
+ (public_name quartz.vercel)
+ (libraries quartz.core unix)
+ (modules vercel_runtime))
