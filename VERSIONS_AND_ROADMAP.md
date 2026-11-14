@@ -90,3 +90,19 @@ lib/
   * `stepper` (multi-phase workflow progress bar)
   * `avatar` & `avatar_group`, `skeleton` shimmer loaders
   * `radar_chart` (multi-axis spider SVG chart) & `candlestick_chart` (OHLC SVG chart)
+
+---
+
+## Planned (not shipped yet)
+
+Full detail, from-scratch vs. borrowed breakdown, MirageOS design and hosting notes live in
+[docs/COMPLETION_PLAN.md](docs/COMPLETION_PLAN.md).
+
+* `v3.1` -- Pure `quartz.core` (no `unix`), clock injection, transport-agnostic `Server.handle`, per-visitor sessions, proper HTTP/1.1, real client IP
+* `v3.2` -- WebSockets, keyed DOM diff patches, streaming SSE, hot reload
+* `v3.3` -- Embedded log-structured store behind a `STORAGE` functor; `pgx` / `caqti` / `irmin` adapters
+* `v3.4` -- Browser runtime via `js_of_ocaml` / `wasm_of_ocaml` + `brr`, hydration
+* `v3.5` -- Hashed assets, `quartz deploy pages | vercel | docker`, GitHub Actions CI
+* `v4.0` -- OCaml 5: Domain pool, effects-based Suspense + streaming SSR, GADT typed routes, shared API types
+* `v4.1` -- `quartz.mirage` unikernel target with TLS + letsencrypt
+* `v4.2` -- Motion engine (keyframes, view/scroll transitions, springs, OKLCH/APCA) + WebGPU/WebGL2 3D
