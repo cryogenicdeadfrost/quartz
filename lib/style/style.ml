@@ -52,6 +52,7 @@ type t =
   | Media of int * t list
 
 let raw_css k v = Kv (k, v)
+let css_var name value = Kv (name, value)
 
 (* display & flex *)
 let block = Kv ("display", "block")

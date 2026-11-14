@@ -228,3 +228,102 @@ let heatmap ?(cols = 12) (values : float list) =
              ]
            [])
        values)
+
+(* Multi-axis SVG spider / radar chart (values in 0..100) *)
+let radar_chart ?(size = 200) ?(color = "#38bdf8") (axes : (string * float) list) =
+  let n = List.length axes in
+  if n < 3 then Dom.empty
+  else
+    let sf = float_of_int size in
+    let cx = sf /. 2.0 and cy = sf /. 2.0 in
+    let radius = (sf /. 2.0) -. 28.0 in
+    let angle_for i =
+      (-.Float.pi /. 2.0) +. (2.0 *. Float.pi *. float_of_int i /. float_of_int n)
+    in
+    let ring_poly pct =
+      let r = radius *. pct in
+      let pts =
+        List.init n (fun i ->
+          let a = angle_for i in
+          (cx +. (r *. Float.cos a), cy +. (r *. Float.sin a)))
+      in
+      Dom.svg_polygon ~points:pts ~fill:"none" ~stroke:"#1e293b" ~stroke_width:1.0 ()
+    in
+    let spokes_and_labels =
+      List.concat
+        (List.mapi
+           (fun i (lbl, _) ->
+             let a = angle_for i in
+             let ex = cx +. (radius *. Float.cos a) in
+             let ey = cy +. (radius *. Float.sin a) in
+             let lx = cx +. ((radius +. 16.0) *. Float.cos a) in
+             let ly = cy +. ((radius +. 16.0) *. Float.sin a) +. 3.0 in
+             [
+               Dom.svg_line ~x1:cx ~y1:cy ~x2:ex ~y2:ey ~stroke:"#1e293b" ();
+               Dom.svg_text ~x:lx ~y:ly ~fill:"#94a3b8" ~font_size:9 ~anchor:"middle" lbl;
+             ])
+           axes)
+    in
+    let data_pts =
+      List.mapi
+        (fun i (_, v) ->
+          let clamped = Float.max 0.0 (Float.min 100.0 v) /. 100.0 in
+          let a = angle_for i in
+          let r = radius *. clamped in
+          (cx +. (r *. Float.cos a), cy +. (r *. Float.sin a)))
+        axes
+    in
+    let dots =
+      List.map (fun (x, y) -> Dom.svg_circle ~cx:x ~cy:y ~r:3.0 ~fill:color ()) data_pts
+    in
+    Dom.svg
+      ~view_box:(Printf.sprintf "0 0 %d %d" size size)
+      ~width:(Printf.sprintf "%dpx" size)
+      ~height:(Printf.sprintf "%dpx" size)
+      ([ ring_poly 0.33; ring_poly 0.66; ring_poly 1.0 ]
+      @ spokes_and_labels
+      @ [ Dom.svg_polygon ~points:data_pts ~fill:"rgba(56, 189, 248, 0.24)" ~stroke:color ~stroke_width:2.0 () ]
+      @ dots)
+
+(* Pure-SVG OHLC Candlestick chart: (open, high, low, close) tuples *)
+let candlestick_chart ?(width = 460) ?(height = 140) (candles : (float * float * float * float) list) =
+  match candles with
+  | [] -> Dom.empty
+  | _ ->
+    let min_l =
+      List.fold_left (fun acc (_, _, l, _) -> Float.min acc l) Float.infinity candles
+    in
+    let max_h =
+      List.fold_left (fun acc (_, h, _, _) -> Float.max acc h) Float.neg_infinity candles
+    in
+    let span = Float.max 1e-6 (max_h -. min_l) in
+    let wf = float_of_int width and hf = float_of_int height in
+    let pad = 10.0 in
+    let plot_h = hf -. (2.0 *. pad) in
+    let y_of v = pad +. plot_h -. (((v -. min_l) /. span) *. plot_h) in
+    let n = List.length candles in
+    let slot_w = wf /. float_of_int n in
+    let body_w = Float.max 6.0 (slot_w *. 0.56) in
+    let shapes =
+      List.concat
+        (List.mapi
+           (fun i (o, h, l, c) ->
+             let bull = c >= o in
+             let col = if bull then "#10b981" else "#f43f5e" in
+             let cx = (float_of_int i *. slot_w) +. (slot_w /. 2.0) in
+             let x = cx -. (body_w /. 2.0) in
+             let yh = y_of h and yl = y_of l in
+             let yo = y_of o and yc = y_of c in
+             let top_y = Float.min yo yc in
+             let bh = Float.max 3.0 (Float.abs (yc -. yo)) in
+             [
+               Dom.svg_line ~x1:cx ~y1:yh ~x2:cx ~y2:yl ~stroke:col ~stroke_width:1.5 ();
+               Dom.svg_rect ~x ~y:top_y ~width:body_w ~height:bh ~rx:2.0 ~fill:col ();
+             ])
+           candles)
+    in
+    Dom.svg
+      ~view_box:(Printf.sprintf "0 0 %d %d" width height)
+      ~width:"100%"
+      ~height:(Printf.sprintf "%dpx" height)
+      shapes

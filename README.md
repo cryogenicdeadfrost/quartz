@@ -4,80 +4,42 @@
 [![OCaml](https://img.shields.io/badge/OCaml-4.13%2B%20%7C%205.x-orange.svg)](https://ocaml.org)
 [![npm required](https://img.shields.io/badge/node__modules-0%20bytes-brightgreen.svg)](#)
 
-**Write UI in OCaml like it's Next.js + Svelte + Tailwind, without touching `npm`, `webpack`, or a 900MB `node_modules` folder.**
+**Write full-stack reactive UIs in OCaml like it's Next.js + Svelte + Tailwind + Express, without touching `npm`, `webpack`, or a 900MB `node_modules` folder.**
 
 Existing OCaml web/UI setups usually make you choose between two kinds of pain:
 
 1. Set up a whole cross-compiler JS bundler pipeline that breaks every time someone sneezes on `package.json`.
 2. Write raw string-concatenated HTML templates like it's 1999.
 
-**`Quartz`** takes a different route: it gives you **React/Svelte-style reactive signals (`use_state`, `use_signal`, `use_memo`, `use_effect`, `use_history`)**, **Tailwind-style type-safe styling with 60fps fluid cursor spotlights & spring motion**, a **Next.js/Nuxt-style multi-page Router & REST API server**, **pure-SVG data visualizations**, and a **built-in Vite-style build & diagnostic CLI (`quartz check`, `quartz build`, `quartz dev`, `quartz tui`)** that compiles your view tree into:
+**`Quartz`** takes a different route: it gives you **React/Svelte-style reactive signals & `<Suspense>` resources**, **Tailwind-style type-safe styling with built-in WCAG 2.1 Color Contrast math & 60fps fluid motion**, an **Express/NestJS-style functional Middleware pipeline + ISR cache + SSE live push**, **pure-SVG data visualizations**, and a **pluggable Custom Renderer Engine** that compiles the exact same OCaml view tree into:
 
-* **An interactive Browser LiveView + REST API server** (`Quartz.run_browser`) running straight on OCaml `Unix` sockets.
-* **A multi-page static HTML/CSS bundle** (`Quartz.run_vite_build`) ready for GitHub Pages / Cloudflare / Vercel.
-* **A terminal Flexbox UI** (`Quartz.run_terminal`) for instant CLI dashboards.
+1. **Interactive Browser LiveView + REST + SSE Server** (`Quartz.run_browser`)
+2. **Multi-Page Static HTML/CSS + SEO Sitemap Bundle** (`Quartz.run_vite_build`)
+3. **Flexbox Terminal UI** (`Quartz.run_terminal` / `quartz tui`)
+4. **HTML5 Canvas2D GPU Draw-Call Buffer** (`Quartz.render_canvas2d` / `quartz canvas`)
+5. **GitHub-Flavored Markdown Document** (`Quartz.render_markdown` / `quartz markdown`)
+6. **Native Mobile / Game-Engine JSON Scenegraph** (`Quartz.render_json_scene` / `quartz json`)
 
 ---
 
 ## Quick Honesty Note
 
-Just keeping it 100% real: I designed `Quartz` because I wanted building websites and dashboards in OCaml to feel as effortless as TypeScript + React/Svelte, and **I used AI to help validate the edge cases and layout math** (like making sure exceptions inside a signal computation don't permanently brick the observer stack). Every module is tested end-to-end with `dune runtest`. And honestly waaaay cooler to do this.
+Just keeping it 100% real: I designed `Quartz` because I wanted building websites and dashboards in OCaml to feel as effortless as TypeScript + React/Svelte, and **I used AI to help validate the edge cases and layout/luminance math** (like WCAG 2.1 sRGB gamma linearization and making sure exceptions inside a signal computation don't permanently brick the observer stack). Every subsystem is tested end-to-end with `dune runtest`. And honestly waaaay cooler to do this.
 
 ---
 
-## Look How Easy It Is
+## Clean Subsystem Folder Architecture
 
-Open `Quartz` once and you get hooks (`use_state`, `use_signal`, `use_memo`, `use_history`), HTML tags (`div`, `h1`, `p`, `button`, `input`), and pre-styled UI components (`btn`, `spotlight_card`, `stat_card`, `modal`, `drawer`, `area_chart`, `donut_ring`) right at the top level:
+All subsystems live in separate folders under `lib/` while remaining 100% accessible via a single `open Quartz`:
 
-```ocaml
-open Quartz
+* **`lib/core/`** — [signal.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/core/signal.ml) (Signals, memos, batching, lenses, time-travel `undo`/`redo`) & [resource.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/core/resource.ml) (Async `<Suspense>` resources, SWR cache, optimistic mutations with automatic rollback)
+* **`lib/style/`** — [style.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/style/style.ml) (Flexbox/Grid, glassmorphism, spring physics, media queries) & [contrast.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/style/contrast.ml) (WCAG 2.1 relative luminance $L$, contrast ratio $CR$, `pick_ink` auto-text color, `passes_aa`/`passes_aaa`)
+* **`lib/frontend/`** — [dom.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/frontend/dom.ml) (HTML5/SVG, Declarative Shadow DOM, Custom Elements, View Transitions), [router.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/frontend/router.ml), [form.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/frontend/form.ml), [charts.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/frontend/charts.ml) (`area_chart`, `donut_ring`, `multi_line_chart`, `radar_chart`, `candlestick_chart`, `heatmap`), [components.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/frontend/components.ml) (`spotlight_card`, `kanban_board`, `command_palette`, `timeline`, `stepper`, `drawer`, `modal`, `accordion`, `switch_toggle`, `slider`, `toast_rack`)
+* **`lib/backend/`** — [middleware.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/backend/middleware.ml) (`cors`, token-bucket `rate_cop`, `bearer_guard`, `csrf_shield`, `security_headers`, `req_timer`), [isr.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/backend/isr.ml) (Incremental Static Regeneration cache), [pubsub.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/backend/pubsub.ml) (SSE live broadcast bus), [server.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/backend/server.ml)
+* **`lib/renderers/`** — [tui.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/renderers/tui.ml) (Flexbox ANSI Terminal renderer) & [custom_renderer.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/renderers/custom_renderer.ml) (`Custom_renderer.Make` functor + `Canvas2d`, `Markdown`, and `Json_scene` renderers)
+* **`lib/tooling/`** — [vite.ml](file:///a:/Projects/OCaml_OpenSource/quartz/lib/tooling/vite.ml) (5-stage `quartz check` doctor with dead-link & WCAG contrast auditing + `quartz build` static bundler with `sitemap.xml` & `build-manifest.json`)
 
-let counter_app () =
-  (* 1. State & derived values — just like React/SolidJS/Svelte *)
-  let count, set_count = use_state 0 in
-  let doubled = use_memo (fun () -> !~count * 2) in
-
-  (* 2. Declarative HTML + Tailwind-style OCaml rules + 60fps cursor spotlight *)
-  spotlight_card
-    ~title:"Quartz Reactive Counter"
-    ~subtitle:"Move your cursor over this card for 60fps radial spotlight tracking"
-    [
-      rx (fun () ->
-        p ~style:Style.[ text_lg; color Palette.slate_200 ] [
-          textf "Count: %d (Doubled: %d)" !~count !~doubled
-        ]);
-      div ~style:Style.[ flex_row; gap 10 ] [
-        btn ~variant:Primary ~on_click:(fun () -> set_count (!~count + 1)) "+ Increment";
-        btn ~variant:Neutral ~on_click:(fun () -> set_count (!~count - 1)) "- Decrement";
-      ]
-    ]
-
-(* 3. Mount it in a live browser, export static HTML, or print in the terminal! *)
-let () =
-  Quartz.run_browser ~port:8080 counter_app
-```
-
----
-
-## What Gives Quartz an Edge Over Next.js / Nuxt / Svelte
-
-* **Fine-Grained Signals + Time-Travel History (`Quartz.Signal`):**
-  `use_state`, `use_signal`, `use_memo`, `use_effect`, `batch`, `use_store` (Redux/Elm reducer store), `use_history` (`undo` / `redo` time-travel stack), plus `!~` (read signal) and `<~` (write signal) operators.
-* **Type-Safe Tailwind Styling & 60fps Fluid Motion (`Quartz.Style` & `Palette`):**
-  `flex_row`, `flex_col`, `grid_cols`, `gap`, `p`, `px`, `py`, `rounded_xl`, `glass` (glassmorphism), `hover_lift` (spring physics), `animate_fade_in`, `animate_slide_up`, plus scoped **`hover [...]`**, **`focus [...]`**, **`dark [...]`**, and responsive **`sm` / `md` / `lg` / `xl`** media queries.
-* **Next.js / Nuxt-Class Multi-Page Router (`Quartz.Router`):**
-  * Dynamic `:param` extraction (`/service/:id`) and wildcard `*` routes
-  * Shared nested layouts (`Router.with_layout`) and route guards (`?guard`)
-  * Reactive URL query parameters (`query_param`, `set_query`) and automatic `breadcrumbs ()`
-  * Compile-time dead-link & route graph verification (`Router.audit_routes`)
-* **Embedded JSON REST APIs (`Quartz.Server`):**
-  Register `api_get "/api/metrics"` and `api_post "/api/deploy"` right alongside your UI routes in the same ~4MB native OCaml binary.
-* **Zero-JS Pure SVG Charting Engine (`Quartz.Charts`):**
-  `area_chart` (with SVG `<linearGradient>` underfill & grid lines), `donut_ring` (circumference `stroke-dasharray` gauges), `multi_line_chart` (multi-series with legend), `heatmap` (intensity matrix), `sparkline`, and `bar_chart`.
-* **Shadcn-Inspired UI Kit (`Quartz.Components`):**
-  `spotlight_card`, `navbar`, `tabs`, `card`, `stat_card`, `badge`, `btn`, `alert`, `modal`, `drawer`, `accordion`, `switch_toggle`, `slider`, `progress_bar`, `toast_rack` (`push_toast`), `code_block`, and `data_table`.
-* **Built-In Vite-Style Doctor & Bundler (`quartz check` & `quartz build`):**
-  Audits your entire route table, verifies every internal `<a href>` link against registered route patterns, checks DOM accessibility, inspects registered REST APIs, probes TCP port readiness, and builds your static site in under 5 milliseconds.
+See [VERSIONS_AND_ROADMAP.md](file:///a:/Projects/OCaml_OpenSource/quartz/VERSIONS_AND_ROADMAP.md) and [docs/ECOSYSTEM_COMPARISON.md](file:///a:/Projects/OCaml_OpenSource/quartz/docs/ECOSYSTEM_COMPARISON.md) for the full feature matrix vs. React, SvelteKit, Next.js, Nuxt, Express, NestJS, Vite, Node, and Bun.
 
 ---
 
@@ -87,23 +49,26 @@ let () =
 git clone https://github.com/cryogenicdeadfrost/quartz.git
 cd quartz
 
-# Build library & CLI
+# Build all 6 subsystems & CLI
 dune build
 
-# Run the unit & integration test suite
+# Run the unit & integration test suite across all subsystems
 dune runtest
 
-# Run the Vite-like Doctor & Static Analyzer (`quartz check`)
+# Run the 5-stage Vite-style Doctor, WCAG Contrast Auditor & Link Checker
 dune exec quartz -- check
 
-# Build the multi-page production static bundle to ./dist_site (`quartz build`)
+# Build the multi-page static site + sitemap.xml + build-manifest.json to ./dist_site
 dune exec quartz -- build
 
-# Start the interactive LiveView + REST API server on http://127.0.0.1:8080 (`quartz dev`)
-dune exec quartz -- dev 8080
+# Render the exact same UI tree across Custom Renderers:
+dune exec quartz -- tui        # Flexbox Terminal UI
+dune exec quartz -- markdown   # GitHub-Flavored Markdown
+dune exec quartz -- canvas     # HTML5 Canvas2D GPU Draw Calls
+dune exec quartz -- json       # Native JSON Scenegraph AST
 
-# Render the component tree in the Flexbox Terminal UI (`quartz tui`)
-dune exec quartz -- tui
+# Start the interactive LiveView + Middleware + REST + SSE server on http://127.0.0.1:8080
+dune exec quartz -- dev 8080
 ```
 
 ---

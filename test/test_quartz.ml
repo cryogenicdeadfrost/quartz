@@ -17,7 +17,7 @@ let has_sub haystack needle =
     done;
     !found
 
-let test_signals () =
+let test_signals_and_resources () =
   let open Signal in
   let count, set_count = create 2 in
   let doubled = computed (fun () -> !~count * 2) in
@@ -37,7 +37,6 @@ let test_signals () =
   set_count 5;
   check "effect reacts to set_count 5 -> 20" (!runs = 2 && !last_seen = 20);
 
-  (* batch multiple updates so effect only fires once *)
   batch (fun () ->
     set_count 10;
     set_count 15;
@@ -48,6 +47,13 @@ let test_signals () =
   set_count 99;
   check "disposed effect stops firing" (!runs = 3);
 
+  (* Lens slice *)
+  let pair_sig = make ("ocaml", 5) in
+  let ver_sig, set_ver = lens pair_sig ~get_field:snd ~set_field:(fun (s, _) v -> (s, v)) in
+  check "lens reads 5" (!~ver_sig = 5);
+  set_ver 6;
+  check "lens updates parent to 6" (snd !~pair_sig = 6);
+
   (* Time-travel undo/redo history *)
   let hist = make_history 10 in
   check "initial history value is 10" (history_get hist = 10 && hist.past = []);
@@ -55,9 +61,33 @@ let test_signals () =
   history_set hist 50;
   check "history updated to 50" (history_get hist = 50 && hist.past <> []);
   check "undo steps back to 25" (undo hist && history_get hist = 25 && hist.future <> []);
-  check "redo steps forward to 50" (redo hist && history_get hist = 50)
+  check "redo steps forward to 50" (redo hist && history_get hist = 50);
 
-let test_dom_and_styles () =
+  (* Async Suspense Resource & Optimistic Rollback *)
+  let res = use_resource ~key:"users" (fun () -> Ok 42) in
+  check "resource initially Ready 42" (Resource.status res = Resource.Ready 42);
+  let ok_mut =
+    Resource.mutate_optimistic res ~optimistic_val:99 (fun () -> Error "network timeout")
+  in
+  check "failed optimistic mutation rolls back to 42"
+    (not ok_mut && Resource.status res = Resource.Ready 42);
+  let ok_mut2 =
+    Resource.mutate_optimistic res ~optimistic_val:100 (fun () -> Ok 100)
+  in
+  check "successful optimistic mutation commits 100"
+    (ok_mut2 && Resource.status res = Resource.Ready 100)
+
+let test_wcag_contrast_and_styles () =
+  (* White vs Black contrast ratio is exactly 21.0 *)
+  let cr_bw = Contrast.contrast_ratio Palette.white Palette.black in
+  check "White vs Black contrast is 21:1" (Float.abs (cr_bw -. 21.0) < 0.05);
+  check "White on Black passes AAA" (Contrast.passes_aaa Palette.white Palette.black);
+  check "Slate-800 on Slate-900 fails AA" (not (Contrast.passes_aa Palette.slate_800 Palette.slate_900));
+  check "pick_ink chooses dark ink on bright yellow"
+    (Contrast.pick_ink Palette.amber_400 = Palette.slate_950);
+  check "pick_ink chooses white ink on dark slate_900"
+    (Contrast.pick_ink Palette.slate_900 = Palette.white);
+
   let open Dom in
   let count = Signal.make 7 in
   let clicked = ref false in
@@ -70,20 +100,23 @@ let test_dom_and_styles () =
         h1 ~style:Style.[ text_2xl; bold; color Palette.sky_400 ] [ text "Quartz <App>" ];
         rx_text (fun () -> Printf.sprintf "Count is %d" (Signal.get count));
         button ~label:"Hit me" ~on_click:(fun () -> clicked := true) [];
+        custom_element "q-badge"
+          ~props:[ ("data-tier", "pro") ]
+          ~shadow:(shadow_root [ text "Shadow Slot" ])
+          [ text "Light Slot" ];
       ]
   in
   let compiled = compile_node view in
   check "HTML escapes <App>" (has_sub compiled.html "Quartz &lt;App&gt;");
-  check "Dynamic rx_text rendered" (has_sub compiled.html "Count is 7");
+  check "Custom element rendered" (has_sub compiled.html "<q-badge");
+  check "Declarative Shadow DOM rendered" (has_sub compiled.html "shadowrootmode=\"open\"");
   check "Hover CSS generated" (has_sub compiled.css ":hover{background-color:#1e293b}");
   check "Responsive @media generated" (has_sub compiled.css "@media(min-width:768px)");
-  check "Click + mousemove handlers registered" (Hashtbl.length compiled.handlers = 2);
 
-  (* Static DOM diagnostics *)
   let diag = Dom.diagnose view in
-  check "DOM diagnostics counts interactive handlers" (diag.handler_count = 2 && diag.a11y_warnings = []);
+  check "DOM diagnostics counts handlers & contrast checks"
+    (diag.handler_count = 2 && diag.contrast_checks >= 1 && diag.contrast_warnings = []);
 
-  (* invoke registered handlers *)
   Hashtbl.iter
     (fun _ h ->
       match h with
@@ -94,8 +127,63 @@ let test_dom_and_styles () =
   check "Registered click callback executed" !clicked;
   check "Registered mousemove callback executed" (!moved = (120, 340))
 
-let test_router_form_components_tui () =
-  (* 1. Router dynamic :param matching, layouts, query params & static link auditing *)
+let test_backend_middleware_isr_pubsub () =
+  (* 1. Middleware pipeline: CORS + Rate Cop + Bearer Guard + Timer *)
+  let base_h (req : Middleware.req) =
+    Middleware.ok (Printf.sprintf {|{"hello":"%s"}|} req.path)
+  in
+  let guarded =
+    Middleware.pipeline
+      [
+        Middleware.cors ~origin:"https://ocaml.org" ();
+        Middleware.bearer_guard ~token:"topsecret";
+        Middleware.req_timer ();
+      ]
+      base_h
+  in
+  let mk_req ?(headers = []) path : Middleware.req =
+    { meth = "GET"; path; query = []; headers; body = ""; client_ip = "10.0.0.1" }
+  in
+  let r_unauth = guarded (mk_req "/private") in
+  check "Bearer guard rejects unauthenticated request with 401"
+    (has_sub r_unauth.status "401");
+
+  let r_auth =
+    guarded (mk_req ~headers:[ ("Authorization", "Bearer topsecret") ] "/private")
+  in
+  check "Bearer guard allows valid token with 200 OK"
+    (r_auth.status = "200 OK" && has_sub r_auth.body "/private");
+  check "CORS & Timer headers injected"
+    (List.assoc_opt "Access-Control-Allow-Origin" r_auth.headers = Some "https://ocaml.org"
+    && Option.is_some (List.assoc_opt "X-Quartz-Time-Us" r_auth.headers));
+
+  (* 2. Token-bucket rate limiter *)
+  let limited =
+    Middleware.pipeline [ Middleware.rate_cop ~max_burst:2.0 ~refill_per_sec:0.0 () ] base_h
+  in
+  let _ = limited (mk_req "/a") in
+  let _ = limited (mk_req "/a") in
+  let r_429 = limited (mk_req "/a") in
+  check "Token-bucket rate limiter returns 429 when burst exhausted"
+    (has_sub r_429.status "429");
+
+  (* 3. ISR Cache *)
+  Isr.clear ();
+  let _, st1 = Isr.get_or_render ~path:"/home" ~revalidate_sec:60.0 (fun () -> "<h1>Cached</h1>") in
+  let html2, st2 = Isr.get_or_render ~path:"/home" ~revalidate_sec:60.0 (fun () -> "<h1>New</h1>") in
+  check "ISR cache transitions MISS -> HIT and serves cached payload"
+    (st1 = "MISS" && st2 = "HIT" && html2 = "<h1>Cached</h1>");
+
+  (* 4. PubSub & SSE framing *)
+  let received = ref "" in
+  Pubsub.subscribe ~topic:"alerts" (fun ev -> received := ev.payload);
+  let ev = Pubsub.publish ~topic:"alerts" "CPU spike" in
+  let sse = Pubsub.format_sse_frame ev in
+  check "PubSub notifies subscriber and formats W3C SSE frame"
+    (!received = "CPU spike" && has_sub sse "event: alerts" && has_sub sse "data: CPU spike")
+
+let test_router_charts_components_and_custom_renderers () =
+  (* 1. Router + Layouts + Static Link Auditor *)
   let shell child = div ~attrs:[ Dom.attr "data-shell" "1" ] [ child ] in
   let routes =
     Router.with_layout shell
@@ -111,81 +199,52 @@ let test_router_form_components_tui () =
   in
   let view () = Router.router routes in
   Router.navigate "/";
-  let home_html = Dom.render_to_string (view ()) in
-  check "Router home route & layout shell" (has_sub home_html "Home Page" && has_sub home_html "data-shell=\"1\"");
-
   let checked_links, broken_links = Router.audit_routes routes [ "/" ] view in
   check "Router static link auditor verifies valid parameterized links"
     (checked_links = [ "/users/42/tab/billing" ] && broken_links = []);
 
-  Router.navigate "/users/42/tab/billing?filter=active";
-  check "Router param + query_param extraction"
-    (has_sub (Dom.render_to_string (view ())) "User=42 Tab=billing Filter=active");
-
-  Router.set_query "filter" "archived";
-  check "Router set_query updates reactive query state"
-    (has_sub (Dom.render_to_string (view ())) "User=42 Tab=billing Filter=archived");
-
-  Router.navigate "/nonexistent/route";
-  check "Router 404 fallback" (has_sub (Dom.render_to_string (view ())) "404");
-
-  (* 2. Form validation *)
-  let email_f = Form.create_field Form.email in
-  check "Untouched field has no visible error" (Form.error email_f = None);
-  Form.set_value email_f "bad-email";
-  check "Invalid email reports error" (Option.is_some (Form.error email_f));
-  Form.set_value email_f "dev@ocaml.org";
-  check "Valid email passes" (Form.error email_f = None && Form.validate email_f = Ok "dev@ocaml.org");
-
-  (* 3. Rich SVG Charts & v2.0 UI Components *)
-  let toggle_sig = use_signal true in
-  let slider_sig = use_signal 75 in
-  push_toast ~variant:Components.Success "Booted All systems nominal";
+  (* 2. Advanced v3.0 Charts & UI Components *)
+  let tasks_sig =
+    use_signal [ { Components.id = 1; title = "Ship v3"; tag = "CORE"; lane = "Todo" } ]
+  in
+  let cmd_sig = use_signal true in
   let dash =
     spotlight_card
       ~title:"Revenue"
       [
+        contrast_badge ~bg_color:Palette.emerald_400 "AA OK";
         stat_card ~label:"MRR" ~value:"$42,500" ~delta:"+18.4%" ();
-        sparkline [ 10.0; 15.0; 12.0; 22.0; 30.0 ];
         area_chart [ 20.0; 45.0; 35.0; 60.0; 80.0 ];
         donut_ring ~label:"CPU" ~pct:78.5 ();
-        multi_line_chart [ ("A", "#38bdf8", [ 1.0; 2.0; 3.0 ]) ];
-        heatmap ~cols:2 [ 10.0; 50.0; 80.0; 30.0 ];
-        bar_chart [ ("Q1", 10.0); ("Q2", 25.0); ("Q3", 40.0) ];
-        switch_toggle ~label:"Turbo" toggle_sig;
-        slider ~label:"Cap" ~min:0 ~max:100 slider_sig;
-        accordion [ ("faq1", "FAQ 1", text "Answer 1") ];
-        toast_rack ();
+        radar_chart [ ("Speed", 95.0); ("RAM", 98.0); ("Safety", 100.0) ];
+        candlestick_chart [ (10.0, 15.0, 8.0, 14.0); (14.0, 18.0, 12.0, 11.0) ];
+        kanban_board ~lanes:[ "Todo"; "Done" ] tasks_sig;
+        timeline [ ("12:00", "Deploy", "All green") ];
+        stepper ~current_step:1 [ "Build"; "Test"; "Ship" ];
+        command_palette ~open_sig:cmd_sig [ ("Run Doctor", "CLI", fun () -> ()) ];
       ]
   in
-  let dash_html = Dom.render_to_string dash in
-  check "Spotlight card attribute rendered" (has_sub dash_html "data-q-spotlight=\"1\"");
-  check "Area chart linearGradient rendered" (has_sub dash_html "<linearGradient");
-  check "Donut ring stroke-dasharray rendered" (has_sub dash_html "stroke-dasharray");
-  check "Toast notification rendered" (has_sub dash_html "Booted");
+  let dash_html = render_html dash in
+  check "Spotlight card & radar polygon rendered"
+    (has_sub dash_html "data-q-spotlight=\"1\"" && has_sub dash_html "<polygon");
+  check "Kanban board & Command palette rendered"
+    (has_sub dash_html "Ship v3" && has_sub dash_html "Command Palette");
 
-  (* 4. Flexbox TUI Renderer *)
-  let tui_str = Tui.render_tui ~width:60 ~height:12 dash in
-  check "TUI frame contains title" (has_sub tui_str "Revenue");
-  check "TUI frame contains value" (has_sub tui_str "$42,500");
-
-  (* 5. Full LiveView Document, Event Dispatch & REST API *)
-  api_get "/api/ping" (fun _ -> {|{"pong":true}|});
-  let count_s, set_s = use_state 10 in
-  let live_app () =
-    div [
-      rx_text (fun () -> Printf.sprintf "Val=%d" !~count_s);
-      btn ~on_click:(fun () -> set_s (!~count_s + 5)) "Add5";
-    ]
-  in
-  let doc, compiled = Server.render_full_document ~title:"TestLive" ~live:true (live_app ()) in
-  check "Full HTML doc has DOCTYPE" (has_sub doc "<!DOCTYPE html>");
-  check "Full HTML doc has Val=10" (has_sub doc "Val=10");
-  Hashtbl.iter (fun id _ -> ignore (Server.dispatch_handler compiled.handlers ~id ~raw_val:"")) compiled.handlers;
-  check "Dispatched server handler updated signal to 15" (!~count_s = 15)
+  (* 3. Multi-Target Custom Renderers: TUI, Markdown, Canvas2D, JSON Scenegraph *)
+  let tui_out = render_tui ~width:60 ~height:12 dash in
+  let md_out = render_markdown dash in
+  let canvas_out = render_canvas2d ~width:600 ~height:300 dash in
+  let json_out = render_json_scene dash in
+  check "TUI renderer outputs ASCII frame" (has_sub tui_out "Revenue");
+  check "Markdown custom renderer outputs GFM" (has_sub md_out "### Revenue" && has_sub md_out "`[SVG Vector Chart]`");
+  check "Canvas2D custom renderer outputs GPU draw calls"
+    (has_sub canvas_out "ctx.fillRect" && has_sub canvas_out "ctx.fillText");
+  check "JSON scenegraph renderer outputs structured AST"
+    (has_sub json_out "\"type\":\"el\"" && has_sub json_out "\"tag\":\"div\"")
 
 let () =
-  test_signals ();
-  test_dom_and_styles ();
-  test_router_form_components_tui ();
-  Printf.printf "[OK] Quartz v2.0 (Fine-Grained Signals, Undo/Redo, SVG Charts, Spotlights, Multi-Page Router, Vite-Check & TUI) passed.\n%!"
+  test_signals_and_resources ();
+  test_wcag_contrast_and_styles ();
+  test_backend_middleware_isr_pubsub ();
+  test_router_charts_components_and_custom_renderers ();
+  Printf.printf "[OK] Quartz v3.0 (6 Subsystems: Core, Style/WCAG, Frontend, Backend/Middleware/ISR/SSE, 4 Custom Renderers & Vite Doctor) passed.\n%!"

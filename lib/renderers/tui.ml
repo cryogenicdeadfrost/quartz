@@ -157,7 +157,6 @@ let render_tui ?(width = 76) ?(height = 20) (root : Dom.node) : string =
     if x >= 0 && x < width && y >= 0 && y < height then grid.(y).(x) <- c
   in
   let put_str x y s =
-    (* strip multi-byte emoji if needed so ASCII column alignment stays clean *)
     let col = ref x in
     for i = 0 to String.length s - 1 do
       let code = Char.code s.[i] in

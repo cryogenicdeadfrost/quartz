@@ -1,18 +1,22 @@
-(* Zero-npm HTTP + LiveView + JSON API server, plus a Vite-style build & check tool.
+(* Zero-npm HTTP + LiveView + JSON REST + SSE + Middleware server.
    Built straight on OCaml Unix sockets. *)
 
 type api_handler = (string * string) list -> string
 
 let api_get_routes : (string, api_handler) Hashtbl.t = Hashtbl.create 16
 let api_post_routes : (string, api_handler) Hashtbl.t = Hashtbl.create 16
+let global_middlewares : Middleware.t list ref = ref []
 
 let api_get path fn = Hashtbl.replace api_get_routes path fn
 let api_post path fn = Hashtbl.replace api_post_routes path fn
+let use_middleware (mw : Middleware.t) = global_middlewares := !global_middlewares @ [ mw ]
+let clear_middlewares () = global_middlewares := []
+let get_api_routes () = api_get_routes
 
 let client_runtime_js =
   {|
 (function() {
-  async function applyPayload(res) {
+  async function applyPayload(res, useViewTransition) {
     if (!res.ok) return;
     const payload = await res.json();
     const rootEl = document.getElementById('quartz-root');
@@ -42,17 +46,21 @@ let client_runtime_js =
       }
     };
 
-    patchDom();
+    if (useViewTransition && typeof document.startViewTransition === 'function') {
+      document.startViewTransition(patchDom);
+    } else {
+      patchDom();
+    }
   }
 
-  async function sendEvent(id, val) {
+  async function sendEvent(id, val, transition) {
     try {
       const res = await fetch('/__quartz_event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'id=' + encodeURIComponent(id) + '&val=' + encodeURIComponent(val || '')
       });
-      await applyPayload(res);
+      await applyPayload(res, !!transition);
     } catch (e) {
       console.error('[Quartz LiveView]', e);
     }
@@ -61,7 +69,7 @@ let client_runtime_js =
   window.addEventListener('popstate', async function() {
     try {
       const res = await fetch('/__quartz_nav?path=' + encodeURIComponent(window.location.pathname + window.location.search));
-      await applyPayload(res);
+      await applyPayload(res, true);
     } catch (_) {}
   });
 
@@ -84,7 +92,7 @@ let client_runtime_js =
         const r = mm.getBoundingClientRect();
         const rx = Math.round(e.clientX - r.left);
         const ry = Math.round(e.clientY - r.top);
-        sendEvent(mm.getAttribute('data-q-mousemove'), rx + ',' + ry);
+        sendEvent(mm.getAttribute('data-q-mousemove'), rx + ',' + ry, false);
       }
     }
   });
@@ -92,29 +100,30 @@ let client_runtime_js =
   document.addEventListener('click', function(e) {
     const t = e.target.closest('[data-q-click]');
     if (t) {
-      if (t.tagName === 'A') e.preventDefault();
-      sendEvent(t.getAttribute('data-q-click'), '');
+      const isNav = t.tagName === 'A';
+      if (isNav) e.preventDefault();
+      sendEvent(t.getAttribute('data-q-click'), '', isNav);
     }
   });
 
   document.addEventListener('input', function(e) {
     const t = e.target.closest('[data-q-input]');
-    if (t) sendEvent(t.getAttribute('data-q-input'), t.value || '');
+    if (t) sendEvent(t.getAttribute('data-q-input'), t.value || '', false);
   });
 
   document.addEventListener('change', function(e) {
     const tc = e.target.closest('[data-q-check]');
     if (tc) {
-      sendEvent(tc.getAttribute('data-q-check'), tc.checked ? 'true' : 'false');
+      sendEvent(tc.getAttribute('data-q-check'), tc.checked ? 'true' : 'false', false);
       return;
     }
     const ch = e.target.closest('[data-q-change]');
-    if (ch) sendEvent(ch.getAttribute('data-q-change'), ch.value || '');
+    if (ch) sendEvent(ch.getAttribute('data-q-change'), ch.value || '', false);
   });
 
   document.addEventListener('keydown', function(e) {
     const t = e.target.closest('[data-q-keydown]');
-    if (t) sendEvent(t.getAttribute('data-q-keydown'), e.key || '');
+    if (t) sendEvent(t.getAttribute('data-q-keydown'), e.key || '', false);
   });
 
   document.addEventListener('submit', function(e) {
@@ -124,7 +133,7 @@ let client_runtime_js =
       const fd = new FormData(f);
       const pairs = [];
       fd.forEach((v, k) => pairs.push(k + '=' + v));
-      sendEvent(f.getAttribute('data-q-submit'), pairs.join('&'));
+      sendEvent(f.getAttribute('data-q-submit'), pairs.join('&'), false);
     }
   });
 })();
@@ -253,21 +262,22 @@ let dispatch_handler (handlers : (int, Dom.handler) Hashtbl.t) ~id ~raw_val =
   match Hashtbl.find_opt handlers id with
   | None -> false
   | Some h ->
-    (match h with
-     | Dom.On_click fn -> fn ()
-     | Dom.On_input fn -> fn raw_val
-     | Dom.On_change fn -> fn raw_val
-     | Dom.On_check fn -> fn (raw_val = "true" || raw_val = "1")
-     | Dom.On_keydown fn ->
-       fn { key = raw_val; ctrl = false; shift = false; alt = false }
-     | Dom.On_mousemove fn ->
-       (match String.split_on_char ',' raw_val with
-        | [ xs; ys ] ->
-          let x = Option.value ~default:0 (int_of_string_opt xs) in
-          let y = Option.value ~default:0 (int_of_string_opt ys) in
-          fn (x, y)
-        | _ -> ())
-     | Dom.On_submit fn -> fn (parse_form_urlencoded raw_val));
+    Signal.batch (fun () ->
+      match h with
+      | Dom.On_click fn -> fn ()
+      | Dom.On_input fn -> fn raw_val
+      | Dom.On_change fn -> fn raw_val
+      | Dom.On_check fn -> fn (raw_val = "true" || raw_val = "1")
+      | Dom.On_keydown fn ->
+        fn { key = raw_val; ctrl = false; shift = false; alt = false }
+      | Dom.On_mousemove fn ->
+        (match String.split_on_char ',' raw_val with
+         | [ xs; ys ] ->
+           let x = Option.value ~default:0 (int_of_string_opt xs) in
+           let y = Option.value ~default:0 (int_of_string_opt ys) in
+           fn (x, y)
+         | _ -> ())
+      | Dom.On_submit fn -> fn (parse_form_urlencoded raw_val));
     true
 
 let read_http_request fd =
@@ -279,12 +289,23 @@ let read_http_request fd =
     let lines = String.split_on_char '\n' raw in
     match lines with
     | [] -> None
-    | req_line :: _ ->
+    | req_line :: rest_lines ->
       let parts = String.split_on_char ' ' (String.trim req_line) in
       let meth, path =
         match parts with
         | m :: p :: _ -> (m, p)
         | _ -> ("GET", "/")
+      in
+      let headers =
+        List.filter_map
+          (fun l ->
+            let trimmed = String.trim l in
+            if trimmed = "" then None
+            else
+              match String.split_on_char ':' trimmed with
+              | k :: v_rest -> Some (String.trim k, String.trim (String.concat ":" v_rest))
+              | [] -> None)
+          rest_lines
       in
       let idx = ref 0 in
       let rlen = String.length raw in
@@ -301,14 +322,19 @@ let read_http_request fd =
         if !found >= 0 && !found <= rlen then String.sub raw !found (rlen - !found)
         else ""
       in
-      Some (meth, path, body)
+      Some (meth, path, headers, body)
 
-let write_http_response fd ~status ~content_type body =
+let write_http_response fd ~status ~content_type ?(extra_headers = []) body =
+  let hdr_str =
+    String.concat ""
+      (List.map (fun (k, v) -> Printf.sprintf "%s: %s\r\n" k v) extra_headers)
+  in
   let resp =
     Printf.sprintf
-      "HTTP/1.1 %s\r\nContent-Type: %s; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s"
+      "HTTP/1.1 %s\r\nContent-Type: %s; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\n%sContent-Length: %d\r\nConnection: close\r\n\r\n%s"
       status
       content_type
+      hdr_str
       (String.length body)
       body
   in
@@ -328,9 +354,9 @@ let run_browser ?(port = 8080) ?(title = "Quartz LiveView App") ?max_requests (a
   Unix.setsockopt sock Unix.SO_REUSEADDR true;
   Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_any, port));
   Unix.listen sock 64;
-  Printf.printf "\n  ⚡ QUARTZ v2.0 DEV & LIVEVIEW SERVER\n";
+  Printf.printf "\n  ⚡ QUARTZ v3.0 FULL-STACK DEV & LIVEVIEW SERVER\n";
   Printf.printf "  ➜ Local:   http://localhost:%d/\n" port;
-  Printf.printf "  ➜ Engine:  Native OCaml Reactive Signals + Zero-npm LiveView\n\n%!";
+  Printf.printf "  ➜ Engine:  Native OCaml Signals + Middleware + ISR + SSE\n\n%!";
   let served = ref 0 in
   let keep_running () =
     match max_requests with
@@ -344,7 +370,7 @@ let run_browser ?(port = 8080) ?(title = "Quartz LiveView App") ?max_requests (a
     (try
        match read_http_request client_fd with
        | None -> ()
-       | Some ("POST", "/__quartz_event", body) ->
+       | Some ("POST", "/__quartz_event", _, body) ->
          let params = parse_form_urlencoded body in
          let id =
            Option.bind (List.assoc_opt "id" params) int_of_string_opt
@@ -362,7 +388,12 @@ let run_browser ?(port = 8080) ?(title = "Quartz LiveView App") ?max_requests (a
              (escape_json_str (Signal.get (Router.current_path ())))
          in
          write_http_response client_fd ~status:"200 OK" ~content_type:"application/json" json
-       | Some ("GET", raw_url, _) when String.length raw_url >= 13 && String.sub raw_url 0 13 = "/__quartz_nav" ->
+       | Some ("GET", "/__quartz_sse", _, _) ->
+         let frames =
+           String.concat "" (List.map Pubsub.format_sse_frame (Pubsub.recent_events ()))
+         in
+         write_http_response client_fd ~status:"200 OK" ~content_type:"text/event-stream" frames
+       | Some ("GET", raw_url, _, _) when String.length raw_url >= 13 && String.sub raw_url 0 13 = "/__quartz_nav" ->
          let _, qs = split_url_and_query raw_url in
          let target = Option.value ~default:"/" (List.assoc_opt "path" qs) in
          Router.navigate target;
@@ -376,124 +407,49 @@ let run_browser ?(port = 8080) ?(title = "Quartz LiveView App") ?max_requests (a
              (escape_json_str (Signal.get (Router.current_path ())))
          in
          write_http_response client_fd ~status:"200 OK" ~content_type:"application/json" json
-       | Some (meth, raw_url, body) ->
+       | Some (meth, raw_url, headers, body) ->
          let clean_path, qs_params = split_url_and_query raw_url in
-         if meth = "GET" && Hashtbl.mem api_get_routes clean_path then (
-           let fn = Hashtbl.find api_get_routes clean_path in
-           let out = fn qs_params in
-           let dt = (Unix.gettimeofday () -. t0) *. 1000.0 in
-           Printf.printf "  [API GET]  %-22s 200 OK (%.2f ms)\n%!" clean_path dt;
-           write_http_response client_fd ~status:"200 OK" ~content_type:"application/json" out
-         ) else if meth = "POST" && Hashtbl.mem api_post_routes clean_path then (
-           let fn = Hashtbl.find api_post_routes clean_path in
-           let out = fn (parse_form_urlencoded body) in
-           let dt = (Unix.gettimeofday () -. t0) *. 1000.0 in
-           Printf.printf "  [API POST] %-22s 200 OK (%.2f ms)\n%!" clean_path dt;
-           write_http_response client_fd ~status:"200 OK" ~content_type:"application/json" out
-         ) else (
-           Router.navigate raw_url;
-           let doc, c = render_full_document ~title ~live:true root_node in
-           last_compiled := c;
-           let dt = (Unix.gettimeofday () -. t0) *. 1000.0 in
-           Printf.printf "  [SSR GET]  %-22s 200 OK (%.2f ms, %.1f kB)\n%!"
-             clean_path dt (float_of_int (String.length doc) /. 1024.0);
-           write_http_response client_fd ~status:"200 OK" ~content_type:"text/html" doc
-         )
+         let base_handler (req : Middleware.req) : Middleware.res =
+           if req.meth = "GET" && Hashtbl.mem api_get_routes req.path then (
+             let fn = Hashtbl.find api_get_routes req.path in
+             let out = fn req.query in
+             let dt = (Unix.gettimeofday () -. t0) *. 1000.0 in
+             Printf.printf "  [API GET]  %-22s 200 OK (%.2f ms)\n%!" req.path dt;
+             Middleware.ok out
+           ) else if req.meth = "POST" && Hashtbl.mem api_post_routes req.path then (
+             let fn = Hashtbl.find api_post_routes req.path in
+             let out = fn (parse_form_urlencoded req.body) in
+             let dt = (Unix.gettimeofday () -. t0) *. 1000.0 in
+             Printf.printf "  [API POST] %-22s 200 OK (%.2f ms)\n%!" req.path dt;
+             Middleware.ok out
+           ) else (
+             Router.navigate raw_url;
+             let doc, c = render_full_document ~title ~live:true root_node in
+             last_compiled := c;
+             let dt = (Unix.gettimeofday () -. t0) *. 1000.0 in
+             Printf.printf "  [SSR GET]  %-22s 200 OK (%.2f ms, %.1f kB)\n%!"
+               req.path dt (float_of_int (String.length doc) /. 1024.0);
+             Middleware.html doc
+           )
+         in
+         let wrapped = Middleware.pipeline !global_middlewares base_handler in
+         let resp =
+           wrapped
+             {
+               Middleware.meth;
+               path = clean_path;
+               query = qs_params;
+               headers;
+               body;
+               client_ip = "127.0.0.1";
+             }
+         in
+         write_http_response client_fd
+           ~status:resp.status
+           ~content_type:resp.content_type
+           ~extra_headers:resp.headers
+           resp.body
      with _ -> ());
     (try Unix.close client_fd with _ -> ())
   done;
   (try Unix.close sock with _ -> ())
-
-(* Vite-style static bundler with per-route size & timing breakdown *)
-let run_vite_build ~out_dir ?(title = "Quartz App") (pages : (string * string * (unit -> Dom.node)) list) =
-  let t0 = Unix.gettimeofday () in
-  (try Unix.mkdir out_dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
-  Printf.printf "\n  ⚡ quartz v2.0 building static production bundle for %s...\n" title;
-  let total_bytes = ref 0 in
-  List.iter
-    (fun (filename, route_path, view_fn) ->
-      let p0 = Unix.gettimeofday () in
-      Router.navigate route_path;
-      let full_path = Filename.concat out_dir filename in
-      let n_bytes = export_page ~path:full_path ~title view_fn in
-      let dt = (Unix.gettimeofday () -. p0) *. 1000.0 in
-      total_bytes := !total_bytes + n_bytes;
-      Printf.printf "  ✓ %-28s %-14s %6.2f kB  │  rendered in %.2f ms\n"
-        (Filename.concat out_dir filename) ("(" ^ route_path ^ ")") (float_of_int n_bytes /. 1024.0) dt)
-    pages;
-  let total_ms = (Unix.gettimeofday () -. t0) *. 1000.0 in
-  Printf.printf "  ─────────────────────────────────────────────────────────────────────────\n";
-  Printf.printf "  ✓ Built %d pages (%.2f kB total, 0 kB external JS) in %.2f ms.\n\n%!"
-    (List.length pages) (float_of_int !total_bytes /. 1024.0) total_ms
-
-(* Vite-style diagnostic & verification suite (`quartz check`) *)
-let run_vite_check
-    ?(port = 8080)
-    ~(routes : Router.route_def list)
-    ~(sample_paths : string list)
-    (app : unit -> Dom.node) =
-  let t0 = Unix.gettimeofday () in
-  Printf.printf "\n  ⚡ QUARTZ DOCTOR & STATIC ANALYZER (v2.0)\n";
-  Printf.printf "  ====================================================================\n";
-
-  (* 1. Route & Internal Link Verification *)
-  let checked_links, broken_links = Router.audit_routes routes sample_paths app in
-  Printf.printf "  [1/4] Route & Link Graph Check\n";
-  Printf.printf "        • Registered Route Patterns : %d\n" (List.length routes);
-  Printf.printf "        • Verified Internal <a href>: %d links (%s)\n"
-    (List.length checked_links) (String.concat ", " checked_links);
-  if broken_links = [] then
-    Printf.printf "        • Dead / Unmatched Links    : 0 (PASS)\n"
-  else (
-    List.iter
-      (fun (from_p, bad) ->
-        Printf.printf "        ✗ BROKEN LINK on %s -> %s\n" from_p bad)
-      broken_links;
-    exit 1
-  );
-
-  (* 2. Per-Page DOM, Atomic CSS & Accessibility Audit *)
-  Printf.printf "\n  [2/4] SSR DOM, Scoped CSS & A11y Audit\n";
-  let total_warns = ref 0 in
-  List.iter
-    (fun p ->
-      let p0 = Unix.gettimeofday () in
-      Router.navigate p;
-      let node = app () in
-      let diag = Dom.diagnose node in
-      let compiled = Dom.compile_node node in
-      let dt = (Unix.gettimeofday () -. p0) *. 1000.0 in
-      total_warns := !total_warns + List.length diag.a11y_warnings;
-      Printf.printf "        • Route %-14s │ %3d nodes │ %2d handlers │ %2d CSS rules │ %5.1f kB │ %.2f ms\n"
-        p diag.element_count diag.handler_count diag.scoped_css_count
-        (float_of_int (String.length compiled.html + String.length compiled.css) /. 1024.0)
-        dt;
-      List.iter (fun w -> Printf.printf "          ⚠ %s\n" w) diag.a11y_warnings)
-    sample_paths;
-
-  (* 3. API Endpoint Check *)
-  Printf.printf "\n  [3/4] Embedded REST API Endpoints\n";
-  Printf.printf "        • Registered GET Endpoints  : %d\n" (Hashtbl.length api_get_routes);
-  Hashtbl.iter
-    (fun path fn ->
-      let sample = fn [] in
-      Printf.printf "        • GET %-21s -> %d bytes JSON\n" path (String.length sample))
-    api_get_routes;
-
-  (* 4. Network Socket Probe *)
-  Printf.printf "\n  [4/4] Network Socket Readiness Probe (port %d)\n" port;
-  let sock_ok =
-    try
-      let s = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-      Unix.setsockopt s Unix.SO_REUSEADDR true;
-      Unix.bind s (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
-      Unix.close s;
-      true
-    with _ -> false
-  in
-  Printf.printf "        • TCP Loopback Bind : %s\n"
-    (if sock_ok then "AVAILABLE & READY (PASS)" else "PORT IN USE BY ANOTHER PROCESS");
-
-  let elapsed = (Unix.gettimeofday () -. t0) *. 1000.0 in
-  Printf.printf "  ====================================================================\n";
-  Printf.printf "  ✓ All checks passed with %d warnings in %.2f ms.\n\n%!" !total_warns elapsed

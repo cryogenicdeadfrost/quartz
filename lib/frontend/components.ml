@@ -31,15 +31,35 @@ let badge ?(variant = Primary) txt =
       ]
     [ Dom.text txt ]
 
+(* Contrast-aware pill badge: uses WCAG 2.1 relative luminance (`Contrast.pick_ink`)
+   to automatically pick crisp dark or white text for any background color! *)
+let contrast_badge ~bg_color txt =
+  let ink = Contrast.pick_ink bg_color in
+  let cr = Contrast.contrast_ratio ink bg_color in
+  Dom.span
+    ~style:
+      [
+        inline_block;
+        px 10;
+        py 4;
+        rounded_full;
+        text_xs;
+        font_bold;
+        bg bg_color;
+        color ink;
+      ]
+    [ Dom.textf "%s (%.1f:1)" txt cr ]
+
 let btn ?(variant = Primary) ?(disabled = false) ?on_click label_txt =
-  let bg_base, hover_bg, txt_col =
+  let bg_base, hover_bg =
     match variant with
-    | Primary -> (Palette.sky_500, Palette.sky_600, Palette.white)
-    | Success -> (Palette.emerald_500, Palette.emerald_600, Palette.white)
-    | Warning -> (Palette.amber_500, Palette.amber_400, Palette.slate_950)
-    | Danger -> (Palette.rose_500, Palette.rose_600, Palette.white)
-    | Neutral -> (Palette.slate_800, Palette.slate_700, Palette.slate_100)
+    | Primary -> (Palette.sky_400, Palette.sky_500)
+    | Success -> (Palette.emerald_400, Palette.emerald_500)
+    | Warning -> (Palette.amber_400, Palette.amber_500)
+    | Danger -> (Palette.rose_600, Palette.rose_500)
+    | Neutral -> (Palette.slate_800, Palette.slate_700)
   in
+  let txt_col = Contrast.pick_ink bg_base in
   Dom.button
     ~disabled
     ?on_click
@@ -215,8 +235,8 @@ let tabs ~initial (items : (string * string * (unit -> Dom.node)) list) =
                    cursor_pointer;
                    transition_all;
                    border ~width:0 ();
-                   bg (if is_cur then Palette.sky_500 else Palette.slate_800);
-                   color (if is_cur then Palette.white else Palette.slate_300);
+                   bg (if is_cur then Palette.sky_400 else Palette.slate_800);
+                   color (if is_cur then Palette.slate_950 else Palette.slate_200);
                  ]
                [])
            items)
@@ -340,6 +360,296 @@ let slider ~label ~min ~max (sig_v : int Signal.t) =
             | None -> ())
           ();
       ])
+
+(* Shimmer skeleton loader box *)
+let skeleton ?(height = 20) ?(width_pct = 100.0) () =
+  Dom.div
+    ~style:[ w_pct width_pct; h_px height; rounded_md; bg Palette.slate_800; animate_pulse ]
+    []
+
+(* User avatar circle with status dot *)
+let avatar ~initials ?(online = true) ?(bg_col = Palette.indigo_600) () =
+  let ink = Contrast.pick_ink bg_col in
+  Dom.div
+    ~style:[ relative; inline_block; w_px 36; h_px 36 ]
+    [
+      Dom.div
+        ~style:
+          [
+            w_px 36;
+            h_px 36;
+            rounded_full;
+            bg bg_col;
+            color ink;
+            flex_row;
+            items_center;
+            justify_center;
+            text_xs;
+            font_bold;
+            border ~width:2 ~color:Palette.slate_900 ();
+          ]
+        [ Dom.text initials ];
+      Dom.span
+        ~style:
+          [
+            absolute;
+            bottom 0;
+            right 0;
+            w_px 10;
+            h_px 10;
+            rounded_full;
+            bg (if online then Palette.emerald_400 else Palette.amber_400);
+            border ~width:2 ~color:Palette.slate_900 ();
+          ]
+        [];
+    ]
+
+(* Vertical activity / deployment timeline *)
+let timeline (items : (string * string * string) list) =
+  Dom.div
+    ~style:[ flex_col; gap 14; pl 8; border ~width:0 () ]
+    (List.map
+       (fun (time_lbl, title_txt, desc_txt) ->
+         Dom.div
+           ~style:[ flex_row; items_start; gap 12 ]
+           [
+             Dom.div
+               ~style:
+                 [
+                   w_px 10;
+                   h_px 10;
+                   mt 6;
+                   rounded_full;
+                   bg Palette.sky_400;
+                   shadow_glow Palette.sky_400;
+                 ]
+               [];
+             Dom.div
+               ~style:[ flex_col; gap 2 ]
+               [
+                 Dom.div
+                   ~style:[ flex_row; items_center; gap 8 ]
+                   [
+                     Dom.strong ~style:[ text_sm; color Palette.white ] [ Dom.text title_txt ];
+                     Dom.span ~style:[ text_xs; font_mono; color Palette.slate_400 ] [ Dom.text time_lbl ];
+                   ];
+                 Dom.span ~style:[ text_xs; color Palette.slate_300 ] [ Dom.text desc_txt ];
+               ];
+           ])
+       items)
+
+(* Multi-step wizard stepper *)
+let stepper ~current_step (steps : string list) =
+  Dom.div
+    ~style:[ flex_row; items_center; justify_between; gap 8; w_full ]
+    (List.mapi
+       (fun i lbl ->
+         let done_ = i < current_step in
+         let active = i = current_step in
+         let circle_bg =
+           if done_ then Palette.emerald_400
+           else if active then Palette.sky_400
+           else Palette.slate_800
+         in
+         let circle_fg = Contrast.pick_ink circle_bg in
+         Dom.div
+           ~style:[ flex_row; items_center; gap 8 ]
+           [
+             Dom.span
+               ~style:
+                 [
+                   w_px 24;
+                   h_px 24;
+                   rounded_full;
+                   bg circle_bg;
+                   color circle_fg;
+                   text_xs;
+                   font_bold;
+                   flex_row;
+                   items_center;
+                   justify_center;
+                 ]
+               [ Dom.text (if done_ then "✓" else string_of_int (i + 1)) ];
+             Dom.span
+               ~style:[ text_xs; font_semibold; color (if active then Palette.white else Palette.slate_400) ]
+               [ Dom.text lbl ];
+           ])
+       steps)
+
+(* Interactive Kanban Board: click any task card to advance it across lanes! *)
+type kanban_item = {
+  id : int;
+  title : string;
+  tag : string;
+  lane : string;
+}
+
+let kanban_board ~(lanes : string list) (tasks_sig : kanban_item list Signal.t) =
+  let next_lane cur =
+    let rec find = function
+      | [] -> cur
+      | [ _ ] -> List.hd lanes
+      | x :: y :: rest -> if x = cur then y else find (y :: rest)
+    in
+    find lanes
+  in
+  let advance_task task_id =
+    Signal.update tasks_sig
+      (List.map (fun t -> if t.id = task_id then { t with lane = next_lane t.lane } else t))
+  in
+  Dom.rx (fun () ->
+    let all_tasks = Signal.get tasks_sig in
+    Dom.div
+      ~style:[ grid_cols (max 1 (List.length lanes)); gap 14; w_full ]
+      (List.map
+         (fun lane_name ->
+           let lane_tasks = List.filter (fun t -> t.lane = lane_name) all_tasks in
+           Dom.div
+             ~style:
+               [
+                 flex_col;
+                 gap 10;
+                 p 14;
+                 rounded_xl;
+                 bg Palette.slate_950;
+                 border ~width:1 ~color:Palette.slate_800 ();
+               ]
+             [
+               Dom.div
+                 ~style:[ flex_row; justify_between; items_center; pb 8; border_b ~color:Palette.slate_800 () ]
+                 [
+                   Dom.strong ~style:[ text_xs; uppercase; tracking_wide; color Palette.slate_300 ]
+                     [ Dom.text lane_name ];
+                   badge ~variant:Neutral (string_of_int (List.length lane_tasks));
+                 ];
+               Dom.div
+                 ~style:[ flex_col; gap 8 ]
+                 (List.map
+                    (fun t ->
+                      Dom.div
+                        ~style:
+                          [
+                            flex_col;
+                            gap 6;
+                            p 12;
+                            rounded_lg;
+                            bg Palette.slate_900;
+                            border ~width:1 ~color:Palette.slate_800 ();
+                            hover_lift;
+                          ]
+                        [
+                          Dom.div
+                            ~style:[ flex_row; justify_between; items_center ]
+                            [
+                              badge ~variant:Primary t.tag;
+                              Dom.button
+                                ~label:"Advance →"
+                                ~on_click:(fun () -> advance_task t.id)
+                                ~style:
+                                  [
+                                    px 8;
+                                    py 2;
+                                    rounded_sm;
+                                    text_xs;
+                                    bg Palette.slate_800;
+                                    color Palette.sky_400;
+                                    border ~width:0 ();
+                                    cursor_pointer;
+                                  ]
+                                [];
+                            ];
+                          Dom.span ~style:[ text_sm; font_medium; color Palette.white ] [ Dom.text t.title ];
+                        ])
+                    lane_tasks);
+             ])
+         lanes))
+
+let contains_sub hay needle =
+  let hlen = String.length hay and nlen = String.length needle in
+  if nlen = 0 then true
+  else if nlen > hlen then false
+  else
+    let ok = ref false in
+    for i = 0 to hlen - nlen do
+      if not !ok && String.sub hay i nlen = needle then ok := true
+    done;
+    !ok
+
+(* ⌘K Command Palette modal with live search filtering *)
+let command_palette ~(open_sig : bool Signal.t) (commands : (string * string * (unit -> unit)) list) =
+  let query_sig = Signal.make "" in
+  Dom.show
+    ~when_:(fun () -> Signal.get open_sig)
+    (fun () ->
+      let q = String.lowercase_ascii (Signal.get query_sig) in
+      let filtered =
+        List.filter
+          (fun (lbl, hint, _) ->
+            q = "" || contains_sub (String.lowercase_ascii (lbl ^ " " ^ hint)) q)
+          commands
+      in
+      Dom.div
+        ~style:
+          [
+            fixed;
+            inset_0;
+            z_index 60;
+            flex_col;
+            items_center;
+            pt 80;
+            bg (`Rgba (2, 6, 23, 0.78));
+            backdrop_blur 6;
+          ]
+        [
+          card
+            ~title:"⌘K Command Palette"
+            ~right:(btn ~variant:Neutral ~on_click:(fun () -> Signal.set open_sig false) "ESC")
+            ~style:[ w_px 500; max_w 540; shadow_xl; animate_slide_up ]
+            [
+              Dom.input
+                ~placeholder:"Type a command or route..."
+                ~value:(Signal.get query_sig)
+                ~on_input:(fun v -> Signal.set query_sig v)
+                ~style:
+                  [
+                    w_full;
+                    p 12;
+                    mb 12;
+                    rounded_lg;
+                    bg Palette.slate_950;
+                    color Palette.white;
+                    border ~width:1 ~color:Palette.sky_500 ();
+                  ]
+                ();
+              Dom.div
+                ~style:[ flex_col; gap 6 ]
+                (List.map
+                   (fun (lbl, hint, action) ->
+                     Dom.button
+                       ~on_click:(fun () ->
+                         action ();
+                         Signal.set open_sig false)
+                       ~style:
+                         [
+                           flex_row;
+                           justify_between;
+                           items_center;
+                           w_full;
+                           p 12;
+                           rounded_lg;
+                           bg Palette.slate_950;
+                           color Palette.white;
+                           border ~width:1 ~color:Palette.slate_800 ();
+                           cursor_pointer;
+                           hover [ bg Palette.slate_800 ];
+                         ]
+                       [
+                         Dom.span ~style:[ text_sm; font_semibold ] [ Dom.text lbl ];
+                         Dom.span ~style:[ text_xs; font_mono; color Palette.sky_400 ] [ Dom.text hint ];
+                       ])
+                   filtered);
+            ];
+        ])
 
 (* Reactive Toast Notification System *)
 type toast_msg = {
@@ -474,3 +784,5 @@ let bar_chart = Charts.bar_chart
 let donut_ring = Charts.donut_ring
 let multi_line_chart = Charts.multi_line_chart
 let heatmap = Charts.heatmap
+let radar_chart = Charts.radar_chart
+let candlestick_chart = Charts.candlestick_chart

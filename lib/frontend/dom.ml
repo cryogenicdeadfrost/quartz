@@ -67,6 +67,61 @@ let each ~items ~key:_ render_item =
 let el tag ?id ?class_ ?(style = []) ?(attrs = []) kids =
   El { tag; id; cls = class_; style; attrs; kids }
 
+(* Web Components & Declarative Shadow DOM (<template shadowrootmode="open">) *)
+let shadow_root ?(mode = "open") ?(scoped_css = "") kids =
+  let style_node =
+    if scoped_css = "" then Empty
+    else el "style" [ Raw_html scoped_css ]
+  in
+  el "template" ~attrs:[ Attr ("shadowrootmode", mode) ] (style_node :: kids)
+
+let custom_element tag ?(props = []) ?(style = []) ?shadow kids =
+  let prop_attrs = List.map (fun (k, v) -> Attr (k, v)) props in
+  let body = match shadow with Some s -> s :: kids | None -> kids in
+  el tag ~style ~attrs:prop_attrs body
+
+(* Browser View Transitions API wrapper (`view-transition-name`) *)
+let view_transition ~name ?(style = []) kids =
+  el "div" ~style:(Style.raw_css "view-transition-name" name :: style) kids
+
+(* React <Suspense> / Svelte #await boundary over a Resource.t *)
+let suspense ~(resource : 'a Resource.t) ?fallback (render_ready : 'a -> node) =
+  let default_skeleton () =
+    el "div"
+      ~style:
+        Style.[
+          h_px 44;
+          w_full;
+          rounded_lg;
+          bg Palette.slate_800;
+          animate_pulse;
+          flex_row;
+          items_center;
+          px 14;
+          color Palette.slate_400;
+          text_xs;
+        ]
+      [ Text ("Loading " ^ resource.key ^ "...") ]
+  in
+  let fb = Option.value ~default:default_skeleton fallback in
+  Dynamic
+    (fun () ->
+      match Resource.status resource with
+      | Resource.Loading -> fb ()
+      | Resource.Ready data -> render_ready data
+      | Resource.Boom err ->
+        el "div"
+          ~style:
+            Style.[
+              p 12;
+              rounded_lg;
+              bg (`Rgba (244, 63, 94, 0.15));
+              border ~width:1 ~color:Palette.rose_500 ();
+              color Palette.rose_400;
+              text_xs;
+            ]
+          [ Text ("Resource error (" ^ resource.key ^ "): " ^ err) ])
+
 (* semantic containers *)
 let div ?id ?class_ ?style ?attrs kids = el "div" ?id ?class_ ?style ?attrs kids
 let span ?id ?class_ ?style ?attrs kids = el "span" ?id ?class_ ?style ?attrs kids
@@ -110,8 +165,10 @@ let button ?id ?class_ ?(style = []) ?(disabled = false) ?(type_ = "button") ?on
   in
   el "button" ?id ?class_ ~style ~attrs:!a children
 
-let a ~href ?(target = "_self") ?id ?class_ ?style ?on_click kids =
+let a ~href ?(target = "_self") ?(prefetch = true) ?id ?class_ ?style ?on_click kids =
   let at = ref [ Attr ("href", href); Attr ("target", target) ] in
+  if prefetch && String.length href > 0 && href.[0] = '/' then
+    at := Attr ("data-q-prefetch", "1") :: !at;
   (match on_click with Some fn -> at := Handler (On_click fn) :: !at | None -> ());
   el "a" ?id ?class_ ?style ~attrs:!at kids
 
@@ -300,11 +357,16 @@ let svg_polyline ~points ?(fill = "none") ?(stroke = "currentColor") ?(stroke_wi
     ]
     []
 
-let svg_polygon ~points ?(fill = "currentColor") () =
+let svg_polygon ~points ?(fill = "currentColor") ?stroke ?(stroke_width = 1.5) () =
   let pts_str =
     String.concat " " (List.map (fun (x, y) -> Printf.sprintf "%.2f,%.2f" x y) points)
   in
-  el "polygon" ~attrs:[ Attr ("points", pts_str); Attr ("fill", fill) ] []
+  let at = ref [ Attr ("points", pts_str); Attr ("fill", fill) ] in
+  (match stroke with
+   | Some s ->
+     at := Attr ("stroke", s) :: Attr ("stroke-width", Printf.sprintf "%.2f" stroke_width) :: !at
+   | None -> ());
+  el "polygon" ~attrs:!at []
 
 let svg_text ~x ~y ?(fill = "#94a3b8") ?(font_size = 11) ?(anchor = "start") txt =
   el "text"
@@ -420,7 +482,19 @@ type diag_report = {
   scoped_css_count : int;
   internal_links : string list;
   a11y_warnings : string list;
+  contrast_checks : int;
+  contrast_warnings : string list;
 }
+
+let extract_hex_style key (styles : Style.t list) : Style.color option =
+  let found = ref None in
+  List.iter
+    (function
+      | Style.Kv (k, v) when k = key && String.length v > 0 && v.[0] = '#' ->
+        found := Some (`Hex v)
+      | _ -> ())
+    styles;
+  !found
 
 let diagnose (root : node) : diag_report =
   let els = ref 0 in
@@ -428,14 +502,30 @@ let diagnose (root : node) : diag_report =
   let css_n = ref 0 in
   let links = ref [] in
   let warns = ref [] in
-  let rec scan = function
+  let c_checks = ref 0 in
+  let c_warns = ref [] in
+  let rec scan inherited_bg = function
     | Empty | Text _ | Raw_html _ -> ()
-    | Fragment ks -> List.iter scan ks
-    | Dynamic fn -> scan (fn ())
+    | Fragment ks -> List.iter (scan inherited_bg) ks
+    | Dynamic fn -> scan inherited_bg (fn ())
     | El { tag; style; attrs; kids; _ } ->
       incr els;
       let _, _, extra = Style.compile_styles ~cls_prefix:"diag" style in
       css_n := !css_n + List.length extra;
+      let cur_bg =
+        match extract_hex_style "background-color" style with
+        | Some b -> b
+        | None -> inherited_bg
+      in
+      (match extract_hex_style "color" style with
+       | Some fg ->
+         incr c_checks;
+         let ratio = Contrast.contrast_ratio fg cur_bg in
+         if ratio < 3.0 then
+           c_warns :=
+             Printf.sprintf "<%s> contrast ratio %.2f:1 is below WCAG threshold (3.0:1)" tag ratio
+             :: !c_warns
+       | None -> ());
       let has_alt = ref false in
       List.iter
         (function
@@ -449,13 +539,15 @@ let diagnose (root : node) : diag_report =
         warns := "<img> element is missing a non-empty alt attribute" :: !warns;
       if tag = "button" && kids = [] then
         warns := "<button> element has no label or child nodes" :: !warns;
-      List.iter scan kids
+      List.iter (scan cur_bg) kids
   in
-  scan root;
+  scan Style.Palette.slate_950 root;
   {
     element_count = !els;
     handler_count = !hnds;
     scoped_css_count = !css_n;
     internal_links = List.rev !links;
     a11y_warnings = List.rev !warns;
+    contrast_checks = !c_checks;
+    contrast_warnings = List.rev !c_warns;
   }

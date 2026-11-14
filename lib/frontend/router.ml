@@ -55,7 +55,6 @@ let split_path p =
 let match_pattern pat target =
   let p_segs = split_path pat in
   let t_segs = split_path target in
-  (* support trailing wildcard /docs/* matching any depth *)
   let has_wild = List.exists (( = ) "*") p_segs in
   if not has_wild && List.length p_segs <> List.length t_segs then None
   else
@@ -149,7 +148,7 @@ let breadcrumbs () =
         let item =
           link ~to_:next_p ~style:Style.[ text_xs; color Palette.slate_400; capitalize ] [ Dom.text s ]
         in
-        build next_p (item :: Dom.span ~style:Style.[ text_xs; color Palette.slate_600 ] [ Dom.text "/" ] :: acc) rest
+        build next_p (item :: Dom.span ~style:Style.[ text_xs; color Palette.slate_400 ] [ Dom.text "/" ] :: acc) rest
     in
     let home = link ~to_:"/" ~style:Style.[ text_xs; color Palette.slate_400 ] [ Dom.text "Home" ] in
     Dom.div ~style:Style.[ flex_row; items_center; gap 8 ] (home :: build "" [] segs))
@@ -160,18 +159,18 @@ let route_matches_any (routes : route_def list) target_url =
 
 let audit_routes (routes : route_def list) (sample_paths : string list) (app : unit -> Dom.node) =
   let broken_links = ref [] in
-  let checked_Links = ref [] in
+  let checked_links = ref [] in
   List.iter
     (fun p ->
       navigate p;
       let diag = Dom.diagnose (app ()) in
       List.iter
         (fun href ->
-          if not (List.mem href !checked_Links) then (
-            checked_Links := href :: !checked_Links;
+          if not (List.mem href !checked_links) then (
+            checked_links := href :: !checked_links;
             if not (route_matches_any routes href) then
               broken_links := (p, href) :: !broken_links
           ))
         diag.internal_links)
     sample_paths;
-  (List.rev !checked_Links, List.rev !broken_links)
+  (List.rev !checked_links, List.rev !broken_links)
