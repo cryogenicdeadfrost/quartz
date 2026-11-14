@@ -177,3 +177,30 @@ let live_toast ~variant:_ ?(style = []) text_msg =
     ~style
     ~attrs:[ Dom.attr "role" "status"; Dom.attr "aria-live" "polite"; Dom.attr "aria-atomic" "true" ]
     [ Dom.text text_msg ]
+
+let listbox ~id ?(aria_label = "Options") ?(multiselectable = false) ?(style = []) (options : (string * bool * (unit -> unit) option) list) =
+  Dom.ul
+    ~id
+    ~style
+    ~attrs:
+      [
+        Dom.attr "role" "listbox";
+        Dom.attr "aria-label" aria_label;
+        Dom.attr "aria-multiselectable" (if multiselectable then "true" else "false");
+        Dom.attr "data-q-roving" "vertical";
+      ]
+    (List.mapi
+       (fun idx (lbl, selected, on_select) ->
+         Dom.li
+           ~attrs:
+             [
+               Dom.attr "role" "option";
+               Dom.attr "aria-selected" (if selected then "true" else "false");
+               Dom.attr "tabindex" (if idx = 0 then "0" else "-1");
+             ]
+           [
+             (match on_select with
+              | Some fn -> Dom.button ~on_click:fn [ Dom.text lbl ]
+              | None -> Dom.text lbl);
+           ])
+       options)

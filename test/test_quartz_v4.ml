@@ -447,7 +447,82 @@ let test_app_live_session_deploy_and_middlewares () =
   ignore (Deploy.emit_mirage ~out_dir:mirage_dir ());
   assert_true "Deploy Mirage unikernel.ml exists" (Sys.file_exists (Filename.concat mirage_dir "unikernel.ml"));
   let llms = Deploy.generate_llms_txt ~title:"Quartz" ~base_url:"https://quartz.dev" routes in
-  assert_true "llms.txt lists routes" (contains_sub ~sub:"https://quartz.dev/" llms)
+  assert_true "llms.txt lists routes" (contains_sub ~sub:"https://quartz.dev/" llms);
+  let ci_yml = Deploy.emit_github_ci ~out_dir:tmp_dir () in
+  assert_true "Deploy CI workflow exists" (Sys.file_exists ci_yml)
+
+let test_v4_2_motion_webgpu_listbox_loader_and_fuzz () =
+  (* Style: @view-transition, @starting-style, CSS deduplication *)
+  let st_cls = Style.starting_style ~cls:"panel" [ Style.opacity 0.0 ] in
+  let _, _, rules =
+    Style.compile_styles ~cls_prefix:"vt"
+      [ Style.view_transition_navigation; Style.view_transition_name "hero"; st_cls ]
+  in
+  let joined = String.concat "\n" rules in
+  assert_true "@view-transition emitted" (contains_sub ~sub:"@view-transition" joined);
+  assert_true "@starting-style emitted" (contains_sub ~sub:"@starting-style" joined);
+  assert_eq_int "CSS dedup removes duplicates" ~expected:2
+    ~actual:(List.length (Style.deduplicate_css [ "a"; "b"; "a"; ""; "b" ]));
+  (* Scene3d WebGPU + WGSL shader serialization *)
+  let gpu_scene =
+    Scene3d.create ~renderer:`WebGPU
+      [
+        Scene3d.mesh ~name:"wgsl-quad"
+          ~material:
+            (Scene3d.Wgsl_shader
+               {
+                 vertex_wgsl = "@vertex fn vs() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }";
+                 fragment_wgsl = "@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }";
+                 uniforms = [ ("u_time", 1.0) ];
+               })
+          ();
+      ]
+  in
+  let gj = Scene3d.to_json_string gpu_scene in
+  assert_true "Scene3d serializes webgpu renderer" (contains_sub ~sub:"\"webgpu\"" gj);
+  assert_true "Scene3d serializes wgsl_shader" (contains_sub ~sub:"\"wgsl_shader\"" gj);
+  (* Headless listbox + FLIP marker support in Browser runtime *)
+  let lb =
+    Headless.listbox ~id:"lb1" ~multiselectable:true
+      [ ("Alpha", true, None); ("Beta", false, None) ]
+  in
+  let lb_c = Dom.compile_node lb in
+  assert_true "Headless listbox ARIA attributes" (contains_sub ~sub:"aria-multiselectable=\"true\"" lb_c.html);
+  assert_true "Browser runtime includes FLIP + WebGPU"
+    (contains_sub ~sub:"data-q-flip" Browser_runtime.client_runtime_js
+     && contains_sub ~sub:"navigator.gpu" Browser_runtime.client_runtime_js);
+  (* Route loader + Request ID middleware *)
+  let loaded_id = ref "" in
+  let loader_routes =
+    [
+      Router.route ~loader:(fun ps -> loaded_id := Option.value ~default:"" (Router.param "id" ps))
+        "/item/:id" (fun _ -> Dom.text "item");
+    ]
+  in
+  (match Router.resolve loader_routes "/item/99" with
+   | Router.Matched _ -> assert_eq_str "Router loader invoked before render" ~expected:"99" ~actual:!loaded_id
+   | _ -> failwith "Expected Matched loader route");
+  let mw_h = Middleware.pipeline [ Middleware.request_id () ] (fun _ -> Middleware.ok "{}") in
+  let r_id =
+    mw_h { Middleware.meth = "GET"; path = "/"; query = []; headers = []; body = ""; client_ip = "127.0.0.1" }
+  in
+  assert_true "Middleware request_id injects X-Request-Id" (List.mem_assoc "X-Request-Id" r_id.headers);
+  (* Adversarial / Fuzz safety across Http, Json, Multipart, Cookie *)
+  let fuzz_inputs =
+    [
+      ""; "\r\n"; "\x00\xff\xfe"; "GET\r\n\r\n"; "POST / HTTP/1.1\r\nContent-Length: -5\r\n\r\n";
+      "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nZZZZ\r\n";
+      String.make 20000 'A'; "{\"a\":[[[[["; "\"unterminated"; "...."; "a.b.c";
+    ]
+  in
+  List.iter
+    (fun inp ->
+      ignore (Http.try_parse_request inp);
+      ignore (Json.parse inp);
+      ignore (Multipart.parse ~content_type:"multipart/form-data; boundary=abc" inp);
+      assert_true "Cookie.verify never crashes on fuzz input"
+        (Option.is_none (Cookie.verify ~secret:"fuzz-secret" inp)))
+    fuzz_inputs
 
 let () =
   test_json_and_decode ();
@@ -461,4 +536,5 @@ let () =
   test_wal_store_migrations_and_jobs ();
   test_universal_targets_edge_mirage_vercel_deploy_import ();
   test_app_live_session_deploy_and_middlewares ();
-  Printf.printf "[OK] Quartz v4.0 Complete Suite: all %d assertions across 11 test groups passed!\n" !passed
+  test_v4_2_motion_webgpu_listbox_loader_and_fuzz ();
+  Printf.printf "[OK] Quartz v4.0-v4.2 Complete Suite: all %d assertions across 12 test groups passed!\n" !passed

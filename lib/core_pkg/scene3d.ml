@@ -15,6 +15,7 @@ type material =
   | Pbr of { color : string; metalness : float; roughness : float; emissive : string }
   | Basic of { color : string; wireframe : bool }
   | Shader of { vertex_glsl : string; fragment_glsl : string; uniforms : (string * float) list }
+  | Wgsl_shader of { vertex_wgsl : string; fragment_wgsl : string; uniforms : (string * float) list }
 
 type light_kind =
   | Ambient of { color : string; intensity : float }
@@ -44,7 +45,7 @@ type scene = {
   camera : camera;
   lights : light_kind list;
   meshes : mesh list;
-  renderer : [ `WebGL2 | `ThreeJS ];
+  renderer : [ `WebGPU | `WebGL2 | `ThreeJS ];
 }
 
 let perspective_camera ?(fov = 45.0) ?(near = 0.1) ?(far = 100.0) ?(pos = (0.0, 1.8, 5.0)) ?(look_at = (0.0, 0.0, 0.0)) () =
@@ -111,6 +112,14 @@ let material_json = function
         ("fragment", Json.string fragment_glsl);
         ("uniforms", Json.obj (List.map (fun (k, v) -> (k, Json.float v)) uniforms));
       ]
+  | Wgsl_shader { vertex_wgsl; fragment_wgsl; uniforms } ->
+    Json.obj
+      [
+        ("kind", Json.string "wgsl_shader");
+        ("vertexWgsl", Json.string vertex_wgsl);
+        ("fragmentWgsl", Json.string fragment_wgsl);
+        ("uniforms", Json.obj (List.map (fun (k, v) -> (k, Json.float v)) uniforms));
+      ]
 
 let light_json = function
   | Ambient { color; intensity } ->
@@ -125,7 +134,7 @@ let light_json = function
 let to_json (s : scene) : Json.t =
   Json.obj
     [
-      ("renderer", Json.string (match s.renderer with `WebGL2 -> "webgl2" | `ThreeJS -> "threejs"));
+      ("renderer", Json.string (match s.renderer with `WebGPU -> "webgpu" | `WebGL2 -> "webgl2" | `ThreeJS -> "threejs"));
       ("background", Json.string s.background);
       ( "camera",
         Json.obj

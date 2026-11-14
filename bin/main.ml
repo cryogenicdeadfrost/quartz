@@ -20,6 +20,7 @@ let setup_backend () =
   Server.clear_middlewares ();
   use_middleware (Middleware.cors ());
   use_middleware (Middleware.security_headers ());
+  use_middleware (Middleware.request_id ());
   use_middleware (Middleware.req_timer ());
   use_middleware (Middleware.rate_cop ~max_burst:120.0 ~refill_per_sec:30.0 ());
 
@@ -805,6 +806,9 @@ let () =
      | "pages" ->
        let f = Deploy.emit_github_pages ~out_dir () in
        Printf.printf "[OK] Emitted GitHub Pages workflow -> %s\n" f
+     | "ci" ->
+       let f = Deploy.emit_github_ci ~out_dir () in
+       Printf.printf "[OK] Emitted GitHub CI workflow -> %s\n" f
      | "vercel" ->
        let d = Deploy.emit_vercel_output ~out_dir () in
        Printf.printf "[OK] Emitted Vercel Build Output v3 -> %s\n" d
@@ -818,7 +822,7 @@ let () =
        let d = Deploy.emit_mirage ~out_dir () in
        Printf.printf "[OK] Emitted MirageOS 4 config.ml + unikernel.ml -> %s\n" d
      | other ->
-       Printf.eprintf "Unknown deploy target %S (expected pages|vercel|cloudflare|fly|mirage)\n" other;
+       Printf.eprintf "Unknown deploy target %S (expected pages|ci|vercel|cloudflare|docker|fly|mirage)\n" other;
        exit 1)
   | _ :: "import-html" :: file :: _ ->
     let html = read_whole_file file in

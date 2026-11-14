@@ -165,6 +165,19 @@ let req_timer ?(clock = Io.Clock_hook.now_s) () : t =
     let us = max 0 (int_of_float ((clock () -. t0) *. 1_000_000.0)) in
     with_header "X-Quartz-Time-Us" (string_of_int us) resp
 
+let request_id_seq = ref 0
+
+let request_id () : t =
+  fun next req ->
+    let rid =
+      match header_opt "x-request-id" req with
+      | Some v when String.trim v <> "" -> String.trim v
+      | _ ->
+        incr request_id_seq;
+        Printf.sprintf "req_%06d_%s" !request_id_seq (Crypto_util.random_hex 4)
+    in
+    next req |> with_header "X-Request-Id" rid
+
 (* End-to-End Type-Safe RPC Endpoints (Next.js Server Actions / tRPC style) *)
 module Endpoint = struct
   type ('req, 'res) spec = {

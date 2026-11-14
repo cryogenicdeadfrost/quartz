@@ -64,6 +64,35 @@ jobs:
   write_file target yml;
   target
 
+let emit_github_ci ?(out_dir = ".") () =
+  let yml =
+    {|name: Quartz CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_check_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.2.x
+      - run: opam install . --deps-only -y
+      - run: dune build
+      - run: dune runtest --force
+      - run: dune exec quartz -- check
+      - run: dune exec quartz -- build
+|}
+  in
+  let target = Filename.concat out_dir ".github/workflows/ci.yml" in
+  write_file target yml;
+  target
+
 let emit_vercel_output ?(out_dir = ".vercel/output") ?(mode = `Edge) ?(app_module = "./quartz_app.bc.js") () =
   let static_dir = Filename.concat out_dir "static" in
   let func_dir = Filename.concat out_dir "functions/index.func" in

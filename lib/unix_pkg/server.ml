@@ -204,6 +204,8 @@ let run_browser
     ?(title = "Quartz Studio Server")
     ?(public_dir = "public")
     ?(workers = 8)
+    ?routes
+    ?(redirects = [])
     ?session_secret
     ?max_requests
     (app : unit -> Dom.node) =
@@ -226,6 +228,40 @@ let run_browser
         (p, fun (r : Middleware.req) -> Middleware.ok (fn (Http.parse_form_urlencoded r.body))) :: acc)
       api_post_routes []
   in
+  let effective_routes =
+    match routes with
+    | Some rs -> rs
+    | None -> [ Router.route ~title "/" (fun _ -> app ()) ]
+  in
+  let started_at = Unix.gettimeofday () in
+  let total_requests = ref 0 in
+  let inspector_handler (_r : Middleware.req) : Middleware.res =
+    let isr_st = Isr.get_stats () in
+    let api_paths = Hashtbl.fold (fun k _ acc -> Json.string k :: acc) api_get_routes [] in
+    Middleware.ok
+      (Json.to_pretty_string
+         (Json.obj
+            [
+              ("engine", Json.string "quartz-v4");
+              ("uptimeSec", Json.float (Unix.gettimeofday () -. started_at));
+              ("requestsHandled", Json.int !total_requests);
+              ("registeredRoutes", Json.int (List.length effective_routes));
+              ("isrHits", Json.int isr_st.hits);
+              ("isrMisses", Json.int isr_st.misses);
+              ("apiGetEndpoints", Json.array api_paths);
+              ("recentEvents",
+               Json.array
+                 (List.map
+                    (fun (ev : Pubsub.event) ->
+                      Json.obj
+                        [
+                          ("id", Json.int ev.id);
+                          ("topic", Json.string ev.topic);
+                          ("payload", Json.string ev.payload);
+                        ])
+                    (Pubsub.recent_events ())));
+            ]))
+  in
   let app_instance =
     App_impl.create
       {
@@ -234,11 +270,11 @@ let run_browser
         session_ttl_s = 86400;
         secure_cookies = false;
         client_script = client_runtime_js;
-        routes = [ Router.route ~title "/" (fun _ -> app ()) ];
-        redirects = [];
+        routes = effective_routes;
+        redirects;
         middlewares = !global_middlewares;
         rpcs = [];
-        get_apis = legacy_get_apis;
+        get_apis = ("/__quartz/inspector", inspector_handler) :: legacy_get_apis;
         post_apis = legacy_post_apis;
         static_assets = [];
         render_for_session = (fun _ _ -> app ());
@@ -312,6 +348,7 @@ let run_browser
                   match serve_public_file ~public_dir req with
                   | Some static_res -> static_res
                   | None ->
+                    incr total_requests;
                     Mutex.lock app_mu;
                     Fun.protect
                       ~finally:(fun () -> Mutex.unlock app_mu)

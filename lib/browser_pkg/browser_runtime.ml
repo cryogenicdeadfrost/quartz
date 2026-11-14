@@ -70,6 +70,14 @@ let client_runtime_js =
     const activeIdx = allCtrls.indexOf(active);
     const selStart = (active && typeof active.selectionStart === 'number') ? active.selectionStart : null;
 
+    const flipBefore = {};
+    if (rootEl) {
+      rootEl.querySelectorAll('[data-q-flip]').forEach(function(el) {
+        const k = el.getAttribute('data-q-flip');
+        if (k) flipBefore[k] = el.getBoundingClientRect();
+      });
+    }
+
     const patchDom = () => {
       const styleEl = document.getElementById('quartz-styles');
       if (styleEl && payload.css !== undefined) styleEl.textContent = payload.css;
@@ -79,6 +87,21 @@ let client_runtime_js =
         } else if (payload.html !== undefined) {
           rootEl.innerHTML = payload.html;
         }
+        rootEl.querySelectorAll('[data-q-flip]').forEach(function(el) {
+          const k = el.getAttribute('data-q-flip');
+          const prevRect = k && flipBefore[k];
+          if (prevRect && typeof el.animate === 'function') {
+            const nextRect = el.getBoundingClientRect();
+            const dx = prevRect.left - nextRect.left;
+            const dy = prevRect.top - nextRect.top;
+            if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+              el.animate(
+                [{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }],
+                { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+              );
+            }
+          }
+        });
         if (activeIdx >= 0) {
           const nextCtrls = Array.from(rootEl.querySelectorAll('input,textarea,select'));
           const nextEl = nextCtrls[activeIdx];
@@ -264,13 +287,49 @@ let client_runtime_js =
     requestAnimationFrame(frame);
   }
 
+  async function mountWebGpuScene(canvas, spec) {
+    if (!navigator.gpu) return false;
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) return false;
+      const device = await adapter.requestDevice();
+      const ctx = canvas.getContext('webgpu');
+      if (!ctx) return false;
+      const fmt = navigator.gpu.getPreferredCanvasFormat();
+      ctx.configure({ device, format: fmt, alphaMode: 'opaque' });
+      const bg = hexToRgb01(spec.background || '#020617');
+      function frame() {
+        const enc = device.createCommandEncoder();
+        const pass = enc.beginRenderPass({
+          colorAttachments: [{
+            view: ctx.getCurrentTexture().createView(),
+            clearValue: { r: bg[0], g: bg[1], b: bg[2], a: 1.0 },
+            loadOp: 'clear',
+            storeOp: 'store'
+          }]
+        });
+        pass.end();
+        device.queue.submit([enc.finish()]);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+      return true;
+    } catch (_) { return false; }
+  }
+
   function hydrateScene3d() {
     document.querySelectorAll('canvas[data-q-scene3d]').forEach(function(c) {
       if (c.__qMounted3d) return;
       c.__qMounted3d = true;
       try {
         const spec = JSON.parse(c.getAttribute('data-q-scene3d'));
-        mountScene3d(c, spec);
+        if (spec.renderer === 'webgpu') {
+          mountWebGpuScene(c, spec).then(function(ok) {
+            if (!ok) mountScene3d(c, spec);
+          });
+        } else {
+          mountScene3d(c, spec);
+        }
       } catch (e) { console.error('[Quartz Scene3d]', e); }
     });
   }
@@ -382,15 +441,46 @@ let client_runtime_js =
     }
   });
 
-  // Live HMR WebSocket listener when running in `quartz dev`
+  // Focus trap & Escape dismiss for dialog[open] / [data-q-popover]
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('dialog[open]').forEach(function(d) {
+        if (typeof d.close === 'function') d.close(); else d.removeAttribute('open');
+      });
+      document.querySelectorAll('[data-q-popover]').forEach(function(p) {
+        if (typeof p.hidePopover === 'function') { try { p.hidePopover(); } catch (_) {} }
+      });
+    } else if (e.key === 'Tab') {
+      const trap = e.target.closest('[data-q-trap-focus="1"]');
+      if (trap) {
+        const focusables = Array.from(trap.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'));
+        if (focusables.length > 0) {
+          const first = focusables[0], last = focusables[focusables.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      }
+    }
+  });
+
+  // Live HMR WebSocket listener with exponential backoff reconnect
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    try {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(proto + '//' + window.location.host + '/__quartz_ws');
-      ws.onmessage = function(ev) {
-        if (ev.data === 'hmr_reload') window.location.reload();
-      };
-    } catch (_) {}
+    let wsDelay = 500;
+    function connectHmrWs() {
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(proto + '//' + window.location.host + '/__quartz_ws');
+        ws.onopen = function() { wsDelay = 500; };
+        ws.onmessage = function(ev) {
+          if (ev.data === 'hmr_reload') window.location.reload();
+        };
+        ws.onclose = function() {
+          setTimeout(connectHmrWs, wsDelay);
+          wsDelay = Math.min(8000, wsDelay * 2);
+        };
+      } catch (_) {}
+    }
+    connectHmrWs();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hydrateAll);

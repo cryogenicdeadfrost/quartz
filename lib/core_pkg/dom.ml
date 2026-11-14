@@ -593,7 +593,7 @@ let compile_node (root : node) : compiled_view =
   let snap = walk_to_buf html_buf root in
   {
     html = Buffer.contents html_buf;
-    css = String.concat "\n" (List.rev !css_rules);
+    css = String.concat "\n" (Style.deduplicate_css (List.rev !css_rules));
     handlers;
     snapshot = snap;
   }

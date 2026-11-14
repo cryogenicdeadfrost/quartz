@@ -309,6 +309,29 @@ let css_property ~name ~syntax ~inherits ~initial_value =
     (Printf.sprintf "@property %s{syntax:%S;inherits:%b;initial-value:%s}"
        name syntax inherits initial_value)
 
+let view_transition_navigation =
+  Raw_at_rule "@view-transition{navigation:auto}"
+
+let view_transition_name name = Kv ("view-transition-name", name)
+
+let starting_style ~cls (inner : t list) =
+  let kvs =
+    String.concat ";"
+      (List.filter_map (function Kv (k, v) -> Some (k ^ ":" ^ v) | _ -> None) inner)
+  in
+  Raw_at_rule (Printf.sprintf "@starting-style{.%s{%s}}" cls kvs)
+
+let deduplicate_css (rules : string list) : string list =
+  let seen = Hashtbl.create (max 16 (List.length rules)) in
+  List.filter
+    (fun r ->
+      if r = "" || Hashtbl.mem seen r then false
+      else (
+        Hashtbl.add seen r ();
+        true
+      ))
+    rules
+
 let hover_lift =
   Hover [ translate_y (-3); shadow_xl; border ~width:1 ~color:Palette.sky_500 () ]
 

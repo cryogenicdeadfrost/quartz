@@ -7,6 +7,7 @@ type route_def = {
   title : string option;
   meta : Dom.page_meta option;
   guard : (unit -> string option) option;
+  loader : (params -> unit) option;
   layout : (Dom.node -> Dom.node) option;
   render : params -> Dom.node;
 }
@@ -91,8 +92,8 @@ let match_pattern pat target =
 
 let param key (ps : params) = List.assoc_opt key ps
 
-let route ?title ?meta ?guard ?layout pattern render =
-  { pattern; title; meta; guard; layout; render }
+let route ?title ?meta ?guard ?loader ?layout pattern render =
+  { pattern; title; meta; guard; loader; layout; render }
 
 let redirect ?(permanent = true) ~from_path ~to_path () =
   { from_path; to_path; status_code = if permanent then 301 else 302 }
@@ -175,13 +176,14 @@ module Path = struct
     go segs p handler
 end
 
-let gadt_route ?title ?meta ?guard ?layout (path : ('fn, Dom.node) Path.t) (render : 'fn) : route_def =
+let gadt_route ?title ?meta ?guard ?loader ?layout (path : ('fn, Dom.node) Path.t) (render : 'fn) : route_def =
   let pat = Path.to_pattern path in
   {
     pattern = pat;
     title;
     meta;
     guard;
+    loader;
     layout;
     render =
       (fun _params ->
@@ -201,6 +203,12 @@ let resolve ?(redirects = []) ?(not_found = default_404) (routes : route_def lis
   | Some rd -> Redirected { status_code = rd.status_code; location = rd.to_path }
   | None ->
     navigate raw_url;
+    let exec_route r ps =
+      Option.iter (fun ld -> ld ps) r.loader;
+      let raw_v = r.render ps in
+      let view = match r.layout with Some lf -> lf raw_v | None -> raw_v in
+      Matched { route = r; params = ps; view }
+    in
     let rec find = function
       | [] -> Not_found { view = not_found () }
       | r :: rest ->
@@ -212,14 +220,8 @@ let resolve ?(redirects = []) ?(not_found = default_404) (routes : route_def lis
               (match g () with
                | Some redirect_to when redirect_to <> clean_path ->
                  Redirected { status_code = 302; location = redirect_to }
-               | _ ->
-                 let raw_v = r.render ps in
-                 let view = match r.layout with Some lf -> lf raw_v | None -> raw_v in
-                 Matched { route = r; params = ps; view })
-            | None ->
-              let raw_v = r.render ps in
-              let view = match r.layout with Some lf -> lf raw_v | None -> raw_v in
-              Matched { route = r; params = ps; view }))
+               | _ -> exec_route r ps)
+            | None -> exec_route r ps))
     in
     find routes
 

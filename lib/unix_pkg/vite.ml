@@ -48,21 +48,20 @@ let run_vite_build
   let rt_rel = Printf.sprintf "assets/quartz-runtime.%s.js" rt_hash in
   write_text_file (Filename.concat out_dir rt_rel) runtime_js;
 
-  let base_css_hash = String.sub (Crypto_util.sha256_hex App.base_reset_css) 0 8 in
-  let base_css_rel = Printf.sprintf "assets/styles.%s.css" base_css_hash in
-  write_text_file (Filename.concat out_dir base_css_rel) App.base_reset_css;
-
   (* Copy /public/* if present *)
   if Sys.file_exists public_dir && Sys.is_directory public_dir then
     copy_dir_recursive ~src:public_dir ~dst:out_dir;
 
   let total_bytes = ref 0 in
   let manifest_entries = ref [] in
+  let all_css_rules = ref [ App.base_reset_css ] in
   List.iter
     (fun (filename, route_path, view_fn) ->
       let p0 = Unix.gettimeofday () in
       Router.navigate route_path;
       let node = view_fn () in
+      let compiled = Dom.compile_node node in
+      if compiled.css <> "" then all_css_rules := !all_css_rules @ String.split_on_char '\n' compiled.css;
       let full_path = Filename.concat out_dir filename in
       let meta = Dom.{ (default_meta ~title ()) with canonical = Some (base_url ^ route_path) } in
       let n_bytes = Server.export_page ~path:full_path ~title ~meta (fun () -> node) in
@@ -79,6 +78,11 @@ let run_vite_build
       Printf.printf "  [OK] %-28s %-14s %6.2f kB  |  rendered in %.2f ms\n"
         full_path ("(" ^ route_path ^ ")") (float_of_int n_bytes /. 1024.0) dt)
     pages;
+
+  let deduped_css = String.concat "\n" (Style.deduplicate_css !all_css_rules) in
+  let base_css_hash = String.sub (Crypto_util.sha256_hex deduped_css) 0 8 in
+  let base_css_rel = Printf.sprintf "assets/styles.%s.css" base_css_hash in
+  write_text_file (Filename.concat out_dir base_css_rel) deduped_css;
 
   let sitemap_urls =
     String.concat "\n"
