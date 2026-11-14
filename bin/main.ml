@@ -100,7 +100,7 @@ let push_telemetry_spike delta label_msg =
     ~variant:(if delta >= 0.0 then Components.Success else Components.Warning)
     label_msg
 
-(* Overlays: Modal, Slide-over Drawer & ⌘K Command Palette *)
+(* Overlays: Modal, Slide-over Drawer & Ctrl+K Command Palette *)
 let modal_open = use_signal false
 let drawer_open = use_signal false
 let cmd_open = use_signal false
@@ -115,11 +115,11 @@ let app_shell child_view =
     ~style:Style.[ h_screen; bg Palette.slate_950; color Palette.slate_100 ]
     [
       navbar
-        ~brand:"⚡ Quartz v3.0"
+        ~brand:"Quartz v3.0"
         ~right:
           (div ~style:Style.[ flex_row; items_center; gap 10 ] [
              avatar ~initials:"AB" ~online:true ();
-             btn ~variant:Primary ~on_click:(fun () -> cmd_open <~ true) "⌘K Actions";
+             btn ~variant:Primary ~on_click:(fun () -> cmd_open <~ true) "Ctrl+K Actions";
              btn ~variant:Neutral ~on_click:(fun () -> drawer_open <~ true) "Inspector";
            ])
         [
@@ -145,7 +145,7 @@ let app_shell child_view =
       command_palette
         ~open_sig:cmd_open
         [
-          ("Trigger +25k rps Traffic Burst", "Telemetry", fun () -> push_telemetry_spike 25.0 "⌘K Burst +25k rps");
+          ("Trigger +25k rps Traffic Burst", "Telemetry", fun () -> push_telemetry_spike 25.0 "Ctrl+K Burst +25k rps");
           ("Navigate to Telemetry & Charts", "Route /analytics", fun () -> navigate "/analytics");
           ("Navigate to Kanban & Reactive Lab", "Route /components", fun () -> navigate "/components");
           ("Toggle Zero-Copy Turbo Cache", "Signal Flip", fun () -> turbo_cache <~ not !~turbo_cache);
@@ -197,7 +197,7 @@ let overview_page _ =
                   btn ~variant:Primary ~on_click:(fun () -> modal_open <~ true) "+ Deploy Service";
                   btn ~variant:Success
                     ~on_click:(fun () -> push_telemetry_spike 18.5 "Ingested +18.5k rps edge burst")
-                    "⚡ Trigger Traffic Burst";
+                    "Trigger Traffic Burst";
                 ];
             ];
         ];
@@ -218,7 +218,7 @@ let overview_page _ =
             ]
           [
             span ~style:Style.[ text_xs; font_mono; color Palette.emerald_400 ]
-              [ text ("✓ [Suspense Resource Ready] " ^ status_msg) ];
+              [ text ("[OK] [Suspense Resource Ready] " ^ status_msg) ];
             stepper ~current_step:2 [ "Compile AST"; "Audit WCAG & Links"; "LiveView / Edge SSR" ];
           ]);
 
@@ -276,7 +276,7 @@ let overview_page _ =
                     "- Shed Load (-11.5k rps)";
                   btn ~variant:Neutral
                     ~on_click:(fun () -> cmd_open <~ true)
-                    "Open ⌘K Palette";
+                    "Open Ctrl+K Palette";
                 ];
             ];
           spotlight_card
@@ -488,7 +488,7 @@ let components_page _ =
     [
       h1 ~style:Style.[ text_3xl; bold; m 0 ] [ text "Interactive Kanban, Time-Travel Lab & Web Components" ];
       spotlight_card
-        ~title:"Reactive Kanban Board (Click 'Advance →' to move tasks across lanes)"
+        ~title:"Reactive Kanban Board (Click 'Advance ->' to move tasks across lanes)"
         ~subtitle:"Backed by a single OCaml Signal list (`kanban_tasks`)"
         [
           kanban_board ~lanes:[ "Backlog"; "In Progress"; "Done" ] kanban_tasks;
@@ -527,8 +527,8 @@ let components_page _ =
                       btn ~variant:Primary
                         ~on_click:(fun () -> Signal.history_set counter_hist (cur_val * 2))
                         "x2 Multiply";
-                      btn ~variant:Neutral ~on_click:(fun () -> ignore (undo counter_hist)) "↶ Undo";
-                      btn ~variant:Neutral ~on_click:(fun () -> ignore (redo counter_hist)) "↷ Redo";
+                      btn ~variant:Neutral ~on_click:(fun () -> ignore (undo counter_hist)) "Undo";
+                      btn ~variant:Neutral ~on_click:(fun () -> ignore (redo counter_hist)) "Redo";
                     ];
                   ]);
             ];
@@ -601,10 +601,10 @@ let network_page _ =
               div ~style:Style.[ flex_row; gap 10; mt 12 ] [
                 link ~to_:"/service/edge-auth-proxy"
                   ~style:Style.[ px 14; py 8; rounded_lg; bg Palette.sky_600; color Palette.white; text_sm; bold ]
-                  [ text "Inspect edge-auth-proxy →" ];
+                  [ text "Inspect edge-auth-proxy ->" ];
                 link ~to_:"/analytics?region=eu-central"
                   ~style:Style.[ px 14; py 8; rounded_lg; bg Palette.slate_800; color Palette.slate_100; text_sm ]
-                  [ text "Deep-Link EU Telemetry →" ];
+                  [ text "Deep-Link EU Telemetry ->" ];
               ];
             ];
         ];
@@ -623,7 +623,7 @@ let service_detail_page params =
         ];
         link ~to_:"/"
           ~style:Style.[ px 14; py 8; rounded_lg; bg Palette.slate_800; color Palette.sky_400; text_sm; bold ]
-          [ text "← Back to Control Plane" ];
+          [ text "<- Back to Control Plane" ];
       ];
       spotlight_card
         ~title:("Live Telemetry for " ^ srv_id)

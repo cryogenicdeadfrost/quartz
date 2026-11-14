@@ -1,5 +1,6 @@
 (lang dune 2.9)
 (name quartz)
+(version 3.0.0)
 
 (generate_opam_files true)
 
@@ -12,8 +13,8 @@
 
 (package
  (name quartz)
- (synopsis "Fine-grained reactive web LiveView, SSR, and Flexbox TUI framework in pure OCaml")
- (description "Quartz brings React/SolidJS ergonomics and Tailwind-style type-safe styling to OCaml with zero npm or JavaScript bundler bloat. Write declarative components once with fine-grained Signals and mount them as an interactive WebSocket LiveView web app, static HTML/CSS site, or 60fps ANSI terminal UI.")
+ (synopsis "Full-stack reactive UI, WCAG styling, middleware server, and custom renderer engine in pure OCaml")
+ (description "Quartz brings React/Svelte ergonomics, Tailwind-style type-safe CSS with WCAG 2.1 contrast math, Express/NestJS-style middleware, ISR/SSE, and multi-target custom renderers (LiveView HTML, Static SSG, Flexbox TUI, Canvas2D, Markdown, JSON Scenegraph) to OCaml with zero npm bloat.")
  (depends
   (ocaml (>= 4.13.0))
   (dune (>= 2.9))))

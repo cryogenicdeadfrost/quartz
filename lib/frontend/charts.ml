@@ -1,5 +1,5 @@
 (* Pure-OCaml SVG visualization engine.
-   Zero D3/Chart.js bloat — compiles straight to vector nodes. *)
+   Zero D3/Chart.js bloat -- compiles straight to vector nodes. *)
 
 let next_grad_id = ref 1
 

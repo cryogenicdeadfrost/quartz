@@ -354,9 +354,9 @@ let run_browser ?(port = 8080) ?(title = "Quartz LiveView App") ?max_requests (a
   Unix.setsockopt sock Unix.SO_REUSEADDR true;
   Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_any, port));
   Unix.listen sock 64;
-  Printf.printf "\n  ⚡ QUARTZ v3.0 FULL-STACK DEV & LIVEVIEW SERVER\n";
-  Printf.printf "  ➜ Local:   http://localhost:%d/\n" port;
-  Printf.printf "  ➜ Engine:  Native OCaml Signals + Middleware + ISR + SSE\n\n%!";
+  Printf.printf "\n  QUARTZ v3.0 FULL-STACK DEV & LIVEVIEW SERVER\n";
+  Printf.printf "  -> Local:   http://localhost:%d/\n" port;
+  Printf.printf "  -> Engine:  Native OCaml Signals + Middleware + ISR + SSE\n\n%!";
   let served = ref 0 in
   let keep_running () =
     match max_requests with

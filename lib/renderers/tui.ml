@@ -31,7 +31,7 @@ let extract_layout_props (styles : Style.t list) =
   List.iter
     (function
       | Style.Kv ("display", v) ->
-        (* check ":row" or "grid-template-columns" — don't just check for 'c' because "direction" has a 'c'! *)
+        (* check ":row" or "grid-template-columns" -- don't just check for 'c' because "direction" has a 'c'! *)
         if has_suffix ~suffix:":row" v || has_prefix ~prefix:"grid;" v then dir := Row
         else if has_suffix ~suffix:":column" v then dir := Col
       | Style.Kv ("padding", v) ->

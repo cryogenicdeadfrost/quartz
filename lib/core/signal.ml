@@ -1,5 +1,5 @@
 (* Fine-grained reactive signals.
-   No virtual-DOM diffing tax — just a tight dependency graph that tracks
+   No virtual-DOM diffing tax -- just a tight dependency graph that tracks
    who read what and fires downstream observers when values actually change. *)
 
 type observer = {
@@ -147,7 +147,7 @@ let create_store init reducer =
   let dispatch action = update st (fun cur -> reducer cur action) in
   (st, dispatch)
 
-(* undo/redo time-travel signal wrapper — handy for editors and interactive playgrounds *)
+(* undo/redo time-travel signal wrapper -- handy for editors and interactive playgrounds *)
 type 'a history = {
   current : 'a t;
   mutable past : 'a list;

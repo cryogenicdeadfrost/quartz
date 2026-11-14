@@ -206,7 +206,7 @@ let drawer ~(open_sig : bool Signal.t) ~title body =
                 ~style:[ flex_row; justify_between; items_center; pb 14; border_b ~color:Palette.slate_800 () ]
                 [
                   Dom.h3 ~style:[ text_lg; font_bold; m 0 ] [ Dom.text title ];
-                  btn ~variant:Neutral ~on_click:(fun () -> Signal.set open_sig false) "✕";
+                  btn ~variant:Neutral ~on_click:(fun () -> Signal.set open_sig false) "X";
                 ];
               Dom.div ~style:[ flex_col; gap 12; overflow_y_auto ] body;
             ];
@@ -281,7 +281,7 @@ let accordion (sections : (string * string * Dom.node) list) =
                    ]
                  [
                    Dom.span [ Dom.text title_txt ];
-                   Dom.span ~style:[ color Palette.sky_400 ] [ Dom.text (if is_open then "−" else "+") ];
+                   Dom.span ~style:[ color Palette.sky_400 ] [ Dom.text (if is_open then "-" else "+") ];
                  ];
                (if is_open then
                   Dom.div ~style:[ px 14; pb 14; text_sm; color Palette.slate_300 ] [ content ]
@@ -469,7 +469,7 @@ let stepper ~current_step (steps : string list) =
                    items_center;
                    justify_center;
                  ]
-               [ Dom.text (if done_ then "✓" else string_of_int (i + 1)) ];
+               [ Dom.text (if done_ then "OK" else string_of_int (i + 1)) ];
              Dom.span
                ~style:[ text_xs; font_semibold; color (if active then Palette.white else Palette.slate_400) ]
                [ Dom.text lbl ];
@@ -543,7 +543,7 @@ let kanban_board ~(lanes : string list) (tasks_sig : kanban_item list Signal.t) 
                             [
                               badge ~variant:Primary t.tag;
                               Dom.button
-                                ~label:"Advance →"
+                                ~label:"Advance ->"
                                 ~on_click:(fun () -> advance_task t.id)
                                 ~style:
                                   [
@@ -575,7 +575,7 @@ let contains_sub hay needle =
     done;
     !ok
 
-(* ⌘K Command Palette modal with live search filtering *)
+(* Ctrl+K Command Palette modal with live search filtering *)
 let command_palette ~(open_sig : bool Signal.t) (commands : (string * string * (unit -> unit)) list) =
   let query_sig = Signal.make "" in
   Dom.show
@@ -602,7 +602,7 @@ let command_palette ~(open_sig : bool Signal.t) (commands : (string * string * (
           ]
         [
           card
-            ~title:"⌘K Command Palette"
+            ~title:"Ctrl+K Command Palette"
             ~right:(btn ~variant:Neutral ~on_click:(fun () -> Signal.set open_sig false) "ESC")
             ~style:[ w_px 500; max_w 540; shadow_xl; animate_slide_up ]
             [
@@ -697,7 +697,7 @@ let toast_rack () =
                [
                  Dom.span ~style:[ text_sm; font_semibold; color text_c ] [ Dom.text t.title ];
                  Dom.button
-                   ~label:"✕"
+                   ~label:"x"
                    ~on_click:(fun () -> dismiss_toast t.id)
                    ~style:[ bg Palette.transparent; color Palette.slate_400; border ~width:0 (); cursor_pointer ]
                    [];

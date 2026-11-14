@@ -62,7 +62,7 @@ let cors ?(origin = "*") ?(methods = "GET, POST, PUT, DELETE, OPTIONS") () : t =
       |> with_header "Access-Control-Allow-Origin" origin
       |> with_header "Access-Control-Allow-Methods" methods
 
-(* 2. Token-Bucket Rate Limiter (`rate_cop`) — O(1) per client IP *)
+(* 2. Token-Bucket Rate Limiter (`rate_cop`) -- O(1) per client IP *)
 type bucket = {
   mutable tokens : float;
   mutable last_ts : float;
@@ -85,7 +85,7 @@ let rate_cop ?(max_burst = 60.0) ?(refill_per_sec = 20.0) () : t =
         b
     in
     if b.tokens < 1.0 then
-      reject ~status:"429 Too Many Requests" "Rate limit exceeded — chill out for a sec"
+      reject ~status:"429 Too Many Requests" "Rate limit exceeded -- chill out for a sec"
     else (
       b.tokens <- b.tokens -. 1.0;
       next req
