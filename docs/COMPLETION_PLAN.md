@@ -200,3 +200,58 @@ site can. Without one, it's capped at what CSS can do (which is a lot in 2026).
 | v4.0 | OCaml 5: Domain pool, effects-based Suspense + streaming SSR, typed GADT routes, shared API types |
 | v4.1 | `quartz.mirage` unikernel target (unix -> hvt -> virtio), TLS + letsencrypt |
 | v4.2 | Motion engine (keyframes, view/scroll transitions, springs, OKLCH/APCA) + WebGPU/WebGL2 3D scene graph |
+
+---
+
+## 7. Bare minimum to host a real website in 2026
+
+Two tiers. A **static site** (portfolio, landing page, docs) needs rows 1-10.
+A **dynamic site** (accounts, forms, dashboards) needs all of them.
+
+Status key: **Have** = works in v3.0.0, **Partial** = exists but incomplete, **Missing** = not built.
+
+| # | Requirement | Status | How Quartz gets it |
+| :--- | :--- | :--- | :--- |
+| 1 | Domain + DNS | n/a | Registrar + host DNS. Nothing for Quartz to do. |
+| 2 | HTTPS | Missing | Host terminates TLS (Vercel, Pages, Fly, Cloud Run), or Caddy in front. Unikernel: `ocaml-tls` + `letsencrypt`. |
+| 3 | Correct HTTP | Partial | Real 404/500 status codes (router 404 currently returns 200), 301 redirects, `HEAD`, `ETag` / `Cache-Control`. From scratch. Compression via `decompress` (pure OCaml) or let the host/CDN compress. |
+| 4 | Static files | Missing | Serve `/public` (images, fonts, favicon, `manifest.webmanifest`) with correct MIME types; copy into `dist_site` on build; hashed filenames. From scratch. |
+| 5 | SEO + social cards | Partial | Have: `<title>`, `sitemap.xml`, `robots.txt`. Need: per-route `meta description`, canonical URL, Open Graph / Twitter tags, JSON-LD. Add a `?meta` record to `Router.route`. From scratch. |
+| 6 | Responsive + accessible | Partial | Have: viewport tag, breakpoints, WCAG contrast audit, `alt` check. Need: visible focus styles, keyboard nav for modal/drawer/palette, `aria-*` on interactive components, `lang` per page. From scratch. |
+| 7 | Performance (Core Web Vitals) | Partial | Have: tiny HTML/CSS, zero JS. Need: `width`/`height` + `loading="lazy"` on images, `font-display: swap`, preload hints. Image resizing/WebP/AVIF at build time: shell out to `cwebp` / `libvips` (borrowed tools). |
+| 8 | Works without the live server | Missing | Static export has dead buttons today. Either progressive enhancement (plain `<form method="post">`, `<details>` instead of JS accordions) or the browser runtime (v3.4). |
+| 9 | Security basics | Partial | Have: security headers, CSRF shield, HTML escaping. Need: Content-Security-Policy, secrets from env vars, request size limits. From scratch. |
+| 10 | Build + deploy pipeline | Missing | `quartz deploy pages / vercel / docker` + GitHub Actions running `dune build`, `dune runtest`, `quartz check` on every push. From scratch (YAML/file emitters). |
+| 11 | Per-visitor sessions | Missing | v3.1 (cookie-keyed sessions). Serverless hosts: store in Redis/KV/Postgres. |
+| 12 | Persistent data + backups | Missing | v3.3 embedded store, or `pgx` / `caqti` to a managed Postgres. Backups = host feature or scheduled dump. |
+| 13 | Auth | Missing | Password hashing borrowed (`argon2`); sessions + login flows from scratch. Or OAuth via a provider's HTTP API. |
+| 14 | Forms + email | Partial | Have: validators. Need: server form endpoint, honeypot + rate limit for spam, email sending via a provider HTTP API (Resend, Postmark) or SMTP (borrowed client). |
+| 15 | Observability | Partial | Have: `/api/health`, request timer header. Need: structured access logs, error capture, uptime pings (external service). |
+| 16 | Privacy / legal | n/a | Privacy policy page; cookie banner only if you add tracking. Server-side page counts avoid needing one. |
+
+**Shortest path to a hostable static site:** rows 3, 4, 5, 8 (progressive enhancement) and 10. All from scratch, no new dependencies.
+
+**Shortest path to a hostable dynamic site:** the above + v3.1, v3.3 and rows 13-15, deployed as Docker on Fly / Railway / Cloud Run.
+
+---
+
+## 8. One core, many targets
+
+There is no single binary that runs everywhere, but there can be a single *codebase*:
+
+- The app is written once against `Server.handle : request -> response` (the same
+  shape as the Fetch API `Request -> Response` that Node, Bun, Deno, Vercel and
+  Cloudflare all use).
+- Two build outputs cover nearly every host:
+  1. **Native static binary (musl, x86_64 + arm64):** Docker (Fly, Railway, Render,
+     Cloud Run), VPS, AWS Lambda / Vercel custom runtime (`bootstrap`), MirageOS.
+  2. **JS / Wasm module (`js_of_ocaml` / `wasm_of_ocaml`) exporting `fetch(request)`:**
+     Vercel Node + Edge, Cloudflare Workers, Netlify, Deno Deploy, Bun.
+- Thin adapters translate each host's request format into `Server.handle`:
+  plain socket loop, Lambda Runtime API loop, Mirage `paf`, JS `fetch`.
+- `quartz deploy <target>` picks the build output and adapter.
+
+Why native alone is not one-size-fits-all: edge platforms (Cloudflare Workers,
+Vercel Edge) only run JS/Wasm, every host packages binaries differently, and
+CPU architecture differs (x86_64 vs arm64). Why JS/Wasm alone isn't either: no
+`unix`, no threads/Domains, slower, and no unikernel.
