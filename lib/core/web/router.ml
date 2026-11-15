@@ -51,6 +51,10 @@ let navigate raw_target =
     Signal.set active_path path_part;
     Signal.set active_query (parse_query_str qs_part))
 
+let with_path raw_target (f : unit -> 'a) : 'a =
+  navigate raw_target;
+  f ()
+
 let query_param key =
   List.assoc_opt key (Signal.get active_query)
 

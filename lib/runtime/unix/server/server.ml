@@ -184,19 +184,22 @@ let handle_websocket_upgrade fd ~room ~sec_key ?on_message () =
           else buf := !buf ^ Bytes.sub_string tmp 0 n
       done)
 
-let handle_sse_stream fd =
+let handle_sse_stream ?(topic = "telemetry") fd =
   let hdr =
     "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n"
   in
   write_all_substring fd hdr;
+  let recent =
+    List.filter (fun (ev : Pubsub.event) -> topic = "*" || ev.topic = topic) (Pubsub.recent_events ())
+  in
   let initial =
-    String.concat "" (List.map Pubsub.format_sse_frame (Pubsub.recent_events ()))
+    String.concat "" (List.map Pubsub.format_sse_frame recent)
   in
   if initial <> "" then write_all_substring fd initial;
   let lock = Mutex.create () in
   let dead = ref false in
   let sub_id =
-    Pubsub.subscribe_id ~topic:"telemetry" (fun ev ->
+    Pubsub.subscribe_id ~topic (fun ev ->
       if not !dead then (
         Mutex.lock lock;
         Fun.protect
@@ -234,6 +237,7 @@ let run_browser
     ?routes
     ?(redirects = [])
     ?session_secret
+    ?session_app
     ?max_requests
     (app : unit -> Dom.node) =
   let secret =
@@ -258,7 +262,11 @@ let run_browser
   let effective_routes =
     match routes with
     | Some rs -> rs
-    | None -> [ Router.route ~title "/" (fun _ -> app ()) ]
+    | None ->
+      [
+        Router.route ~title "/" (fun _ -> app ());
+        Router.route ~title "/*" (fun _ -> app ());
+      ]
   in
   let started_at = Unix.gettimeofday () in
   let total_requests = ref 0 in
@@ -312,7 +320,6 @@ let run_browser
     List.iter (fun ch -> write_all_substring client_fd (Http.encode_chunked_chunk ch)) chunks;
     write_all_substring client_fd Http.encode_chunked_finish
   in
-  ignore send_streaming_ssr;
   let app_instance =
     App_impl.create
       {
@@ -328,7 +335,12 @@ let run_browser
         get_apis = ("/__quartz/inspector", inspector_handler) :: legacy_get_apis;
         post_apis = legacy_post_apis;
         static_assets = [];
-        render_for_session = (fun _ _ -> app ());
+        render_for_session =
+          (fun sess (req : Middleware.req) ->
+            Router.with_path req.path (fun () ->
+              match session_app with
+              | Some fn -> fn sess req
+              | None -> app ()));
       }
   in
   let pool = Unix_adapters.Worker_pool.create ~workers () in
@@ -371,9 +383,15 @@ let run_browser
               keep_conn := false
             | None ->
               if parsed.meth = "GET" && clean_path = "/__quartz_sse" then (
+                let sse_topic = Option.value (List.assoc_opt "topic" query) ~default:"telemetry" in
                 if max_requests <> None then (
+                  let recent =
+                    List.filter
+                      (fun (ev : Pubsub.event) -> sse_topic = "*" || ev.topic = sse_topic)
+                      (Pubsub.recent_events ())
+                  in
                   let frames =
-                    String.concat "" (List.map Pubsub.format_sse_frame (Pubsub.recent_events ()))
+                    String.concat "" (List.map Pubsub.format_sse_frame recent)
                   in
                   let wire =
                     Http.format_http_response ~status:"200 OK" ~content_type:"text/event-stream"
@@ -381,7 +399,20 @@ let run_browser
                   in
                   write_all_substring client_fd wire
                 ) else
-                  handle_sse_stream client_fd;
+                  handle_sse_stream ~topic:sse_topic client_fd;
+                keep_conn := false
+              ) else if parsed.meth = "GET"
+                        && (clean_path = "/__quartz_stream" || List.assoc_opt "stream" query = Some "1") then (
+                incr total_requests;
+                let shell_node =
+                  Mutex.lock app_mu;
+                  Fun.protect
+                    ~finally:(fun () -> Mutex.unlock app_mu)
+                    (fun () ->
+                      let target_p = if clean_path = "/__quartz_stream" then "/" else clean_path in
+                      Router.with_path target_p (fun () -> app ()))
+                in
+                send_streaming_ssr client_fd ~title ~shell:shell_node [];
                 keep_conn := false
               ) else (
                 let client_ip = Http.extract_client_ip ~peer_ip parsed.headers in

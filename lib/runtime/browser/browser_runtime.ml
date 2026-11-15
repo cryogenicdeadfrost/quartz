@@ -474,8 +474,93 @@ let client_runtime_js =
       if (!ctx) return false;
       const fmt = navigator.gpu.getPreferredCanvasFormat();
       ctx.configure({ device, format: fmt, alphaMode: 'opaque' });
+      const wgslCode = `
+        struct Uniforms {
+          proj : mat4x4<f32>,
+          pos  : vec4<f32>,
+          spin : vec4<f32>,
+          col  : vec4<f32>,
+        };
+        @group(0) @binding(0) var<uniform> u : Uniforms;
+        struct VsOut {
+          @builtin(position) clipPos : vec4<f32>,
+          @location(0) vCol : vec3<f32>,
+        };
+        @vertex fn vs_main(@location(0) aPos : vec3<f32>) -> VsOut {
+          let t = u.pos.w;
+          let ax = t * u.spin.x;
+          let ay = t * u.spin.y;
+          let cy = cos(ay); let sy = sin(ay);
+          var p = vec3<f32>(aPos.x * cy - aPos.z * sy, aPos.y, aPos.x * sy + aPos.z * cy);
+          let cx = cos(ax); let sx = sin(ax);
+          p = vec3<f32>(p.x, p.y * cx - p.z * sx, p.y * sx + p.z * cx) + u.pos.xyz;
+          var out : VsOut;
+          out.clipPos = u.proj * vec4<f32>(p, 1.0);
+          let shade = 0.65 + 0.35 * normalize(aPos + vec3<f32>(0.0001, 0.0001, 0.0001)).y;
+          out.vCol = u.col.xyz * shade;
+          return out;
+        }
+        @fragment fn fs_main(in : VsOut) -> @location(0) vec4<f32> {
+          return vec4<f32>(in.vCol, 1.0);
+        }
+      `;
+      const shaderModule = device.createShaderModule({ code: wgslCode });
+      const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+          module: shaderModule,
+          entryPoint: 'vs_main',
+          buffers: [{
+            arrayStride: 12,
+            attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }]
+          }]
+        },
+        fragment: {
+          module: shaderModule,
+          entryPoint: 'fs_main',
+          targets: [{ format: fmt }]
+        },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' }
+      });
+      const depthTex = device.createTexture({
+        size: [Math.max(1, canvas.width), Math.max(1, canvas.height)],
+        format: 'depth24plus',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT
+      });
+      const gpuMeshes = (spec.meshes || []).map(function(m) {
+        const geom = geomForSpec(m.geometry);
+        const vb = device.createBuffer({
+          size: Math.max(16, (geom.pos.byteLength + 3) & ~3),
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+        });
+        device.queue.writeBuffer(vb, 0, geom.pos);
+        const paddedIdxLen = (geom.idx.length + 1) & ~1;
+        const paddedIdx = new Uint16Array(paddedIdxLen);
+        paddedIdx.set(geom.idx);
+        const ib = device.createBuffer({
+          size: Math.max(4, paddedIdx.byteLength),
+          usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
+        });
+        device.queue.writeBuffer(ib, 0, paddedIdx);
+        const ub = device.createBuffer({
+          size: 128,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        });
+        const bgGroup = device.createBindGroup({
+          layout: pipeline.getBindGroupLayout(0),
+          entries: [{ binding: 0, resource: { buffer: ub } }]
+        });
+        return { m: m, vb: vb, ib: ib, ub: ub, bgGroup: bgGroup, idxCount: geom.idx.length };
+      });
       const bg = hexToRgb01(spec.background || '#020617');
-      function frame() {
+      const tStart = performance.now();
+      const uData = new Float32Array(32);
+      function frame(now) {
+        const t = (now - tStart) / 1000.0;
+        const cam = spec.camera || {};
+        const proj = mat4Perspective(cam.fov || 45, canvas.width / Math.max(1, canvas.height), cam.near || 0.1, cam.far || 100);
+        const cp = cam.pos || [0, 0, 5];
         const enc = device.createCommandEncoder();
         const pass = enc.beginRenderPass({
           colorAttachments: [{
@@ -483,7 +568,28 @@ let client_runtime_js =
             clearValue: { r: bg[0], g: bg[1], b: bg[2], a: 1.0 },
             loadOp: 'clear',
             storeOp: 'store'
-          }]
+          }],
+          depthStencilAttachment: {
+            view: depthTex.createView(),
+            depthClearValue: 1.0,
+            depthLoadOp: 'clear',
+            depthStoreOp: ' discard' === '' ? 'store' : 'store'
+          }
+        });
+        pass.setPipeline(pipeline);
+        gpuMeshes.forEach(function(item) {
+          uData.set(proj, 0);
+          const mp = item.m.pos || [0, 0, 0];
+          uData[16] = mp[0] - cp[0]; uData[17] = mp[1] - cp[1]; uData[18] = mp[2] - cp[2]; uData[19] = t;
+          const ms = item.m.spin || [0.4, 0.8, 0.1];
+          uData[20] = ms[0]; uData[21] = ms[1]; uData[22] = ms[2]; uData[23] = 0.0;
+          const mc = hexToRgb01((item.m.material && item.m.material.color) || '#38bdf8');
+          uData[24] = mc[0]; uData[25] = mc[1]; uData[26] = mc[2]; uData[27] = 1.0;
+          device.queue.writeBuffer(item.ub, 0, uData);
+          pass.setBindGroup(0, item.bgGroup);
+          pass.setVertexBuffer(0, item.vb);
+          pass.setIndexBuffer(item.ib, 'uint16');
+          pass.drawIndexed(item.idxCount, 1, 0, 0, 0);
         });
         pass.end();
         device.queue.submit([enc.finish()]);

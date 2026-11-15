@@ -1,0 +1,16 @@
+(include_subdirs unqualified)
+
+(library
+ (name quartz_unix)
+ (public_name quartz.unix)
+ (libraries quartz.core quartz.browser quartz.edge quartz.mirage unix threads)
+ (modules
+  unix_adapters
+  db_driver
+  server
+  deploy
+  scaffolder
+  import_html
+  import_dts
+  npm_server_plug
+  vite))

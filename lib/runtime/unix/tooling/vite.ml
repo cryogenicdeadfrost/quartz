@@ -39,7 +39,16 @@ let run_vite_build
     (pages : (string * string * (unit -> Dom.node)) list) =
   let t0 = Unix.gettimeofday () in
   Deploy.ensure_dir_p out_dir;
-  Deploy.ensure_dir_p (Filename.concat out_dir "assets");
+  let assets_dir = Filename.concat out_dir "assets" in
+  Deploy.ensure_dir_p assets_dir;
+  (* Clean any previous content-hashed runtime or stylesheet files to prevent stale buildup *)
+  if Sys.file_exists assets_dir && Sys.is_directory assets_dir then
+    Array.iter
+      (fun entry ->
+        if (String.length entry > 15 && String.sub entry 0 15 = "quartz-runtime.")
+           || (String.length entry > 7 && String.sub entry 0 7 = "styles.") then
+          (try Sys.remove (Filename.concat assets_dir entry) with _ -> ()))
+      (Sys.readdir assets_dir);
   Printf.printf "\n  [quartz v4.0] building static production bundle + hashed runtime for %s...\n" title;
 
   (* Emit shared browser runtime chunk (content-hashed!) so islands share ONE chunk *)
@@ -132,6 +141,12 @@ let run_vite_build
   in
   write_text_file (Filename.concat out_dir "llms.txt")
     (Deploy.generate_llms_txt ~title ~base_url llms_routes);
+  write_text_file (Filename.concat out_dir ".nojekyll") "";
+  let index_html_path = Filename.concat out_dir "index.html" in
+  let four_oh_four_path = Filename.concat out_dir "404.html" in
+  if Sys.file_exists index_html_path && not (Sys.file_exists four_oh_four_path) then
+    copy_file ~src:index_html_path ~dst:four_oh_four_path;
+  ignore (Deploy.emit_standalone_edge_bundle ~out_dir ~dist_dir:out_dir ());
 
   (* Build-time responsive image optimization when `vips`, `convert`, or `cwebp` is available *)
   let has_bin name = Sys.command (Printf.sprintf "command -v %s >/dev/null 2>&1" (Filename.quote name)) = 0 in

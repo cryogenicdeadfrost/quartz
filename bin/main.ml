@@ -792,6 +792,9 @@ Usage:
                                          fly | docker | railway | caddy | mirage
   quartz import-html <file.html>       Convert HTML + Tailwind classes into Quartz OCaml code
   quartz gen-plug <pkg> <file.d.ts>    Generate typed OCaml plug wrapper from TypeScript .d.ts
+  quartz templates                     List all available starter templates
+  quartz create <template> <dir>       Scaffold a new Quartz project (minimal, fullstack-saas,
+                                         static-blog, realtime-collab, webgl-3d, js-hybrid)
   quartz new <saas|docs|api> <dir>     Scaffold a new Quartz v4 starter application
   quartz tui | markdown | canvas | json Render `/` via alternate backend|}
 
@@ -804,15 +807,15 @@ let () =
   | _ :: "dev" :: port_s :: "--hmr" :: _ ->
     let port = Option.value ~default:8080 (int_of_string_opt port_s) in
     let _stop_hmr = Vite.start_hmr_watcher () in
-    run_browser ~port ~title:"Quartz v4.2 Studio (HMR)" studio_app
+    run_browser ~port ~title:"Quartz v4.2 Studio (HMR)" ~routes:app_routes studio_app
   | _ :: "dev" :: "--hmr" :: _ ->
     let _stop_hmr = Vite.start_hmr_watcher () in
-    run_browser ~port:8080 ~title:"Quartz v4.2 Studio (HMR)" studio_app
+    run_browser ~port:8080 ~title:"Quartz v4.2 Studio (HMR)" ~routes:app_routes studio_app
   | _ :: ("dev" | "serve") :: port_s :: _ ->
     let port = Option.value ~default:8080 (int_of_string_opt port_s) in
-    run_browser ~port ~title:"Quartz v4.2 Studio" studio_app
+    run_browser ~port ~title:"Quartz v4.2 Studio" ~routes:app_routes studio_app
   | _ :: ("dev" | "serve") :: _ ->
-    run_browser ~port:8080 ~title:"Quartz v4.2 Studio" studio_app
+    run_browser ~port:8080 ~title:"Quartz v4.2 Studio" ~routes:app_routes studio_app
   | _ :: "check" :: _ ->
     run_vite_check ~port:8080 ~routes:app_routes ~sample_paths studio_app
   | _ :: "build" :: _ ->
@@ -871,18 +874,37 @@ let () =
   | _ :: "gen-plug" :: pkg :: file :: _ ->
     let dts = read_whole_file file in
     print_endline (Import_dts.generate_ocaml_plug ~pkg dts)
+  | _ :: "templates" :: _ ->
+    print_endline "Available Quartz Project Templates (run `quartz create <template> <dir>`):";
+    List.iter
+      (fun (t : Scaffolder.template_info) ->
+        Printf.printf "  %-18s %-34s [%s]\n    %s\n" t.id t.title t.stack t.description)
+      Scaffolder.available_templates
+  | _ :: ("create" | "init") :: tmpl :: dir :: _ ->
+    (match Scaffolder.scaffold_project ~template_id:tmpl ~target_dir:dir with
+     | Ok files ->
+       Printf.printf "[OK] Scaffolded Quartz `%s` project in %s/ (%d files)\n" tmpl dir (List.length files)
+     | Error err ->
+       Printf.eprintf "[ERROR] %s\n" err;
+       exit 1)
   | _ :: "new" :: tmpl :: dir :: _ ->
-    let template =
-      match String.lowercase_ascii tmpl with
-      | "saas" -> `Saas
-      | "docs" -> `Docs
-      | "api" -> `Api
-      | other ->
-        Printf.eprintf "Unknown template %S (expected saas|docs|api)\n" other;
-        exit 1
-    in
-    let out = Deploy.scaffold_project ~dir ~template in
-    Printf.printf "[OK] Scaffolded Quartz `%s` project in %s/\n" tmpl out
+    (match String.lowercase_ascii tmpl with
+     | "saas" ->
+       let out = Deploy.scaffold_project ~dir ~template:`Saas in
+       Printf.printf "[OK] Scaffolded Quartz `%s` project in %s/\n" tmpl out
+     | "docs" ->
+       let out = Deploy.scaffold_project ~dir ~template:`Docs in
+       Printf.printf "[OK] Scaffolded Quartz `%s` project in %s/\n" tmpl out
+     | "api" ->
+       let out = Deploy.scaffold_project ~dir ~template:`Api in
+       Printf.printf "[OK] Scaffolded Quartz `%s` project in %s/\n" tmpl out
+     | _ ->
+       (match Scaffolder.scaffold_project ~template_id:tmpl ~target_dir:dir with
+        | Ok files ->
+          Printf.printf "[OK] Scaffolded Quartz `%s` project in %s/ (%d files)\n" tmpl dir (List.length files)
+        | Error err ->
+          Printf.eprintf "[ERROR] %s\n" err;
+          exit 1))
   | _ :: "tui" :: _ ->
     Router.navigate "/";
     run_terminal ~width:80 ~height:20 studio_app

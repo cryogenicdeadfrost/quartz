@@ -34,6 +34,7 @@ let worker_bootstrap_js =
   {|const readline = require('readline');
 const path = require('path');
 const { pathToFileURL } = require('url');
+globalThis.__quartzState = globalThis.__quartzState || {};
 
 async function resolvePkg(pkg) {
   if (pkg === '__builtin_eval') return null;
@@ -56,8 +57,8 @@ rl.on('line', async (line) => {
   try {
     let result;
     if (req.pkg === '__builtin_eval') {
-      const fn = new Function('args', 'return (' + req.fn + ')(args);');
-      result = await fn(req.args);
+      const fn = new Function('args', 'require', 'state', 'return (' + req.fn + ')(args, require, state);');
+      result = await fn(req.args, require, globalThis.__quartzState);
     } else {
       const mod = await resolvePkg(req.pkg);
       const target = req.fn === 'default' ? (mod.default || mod) : (mod[req.fn] || (mod.default && mod.default[req.fn]));
@@ -91,7 +92,9 @@ let start_worker ?runtime () : (worker, string) result =
   | None -> Error "No JavaScript runtime found on PATH (expected node, bun, or deno)"
   | Some bin ->
     let args =
-      if Filename.basename bin = "deno" then [| bin; "run"; "--allow-all"; "-e"; worker_bootstrap_js |]
+      let base = Filename.basename bin in
+      if base = "deno" then [| bin; "run"; "--allow-all"; "-e"; worker_bootstrap_js |]
+      else if base = "node" || base = "node.exe" then [| bin; "--no-warnings"; "-e"; worker_bootstrap_js |]
       else [| bin; "-e"; worker_bootstrap_js |]
     in
     try

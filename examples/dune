@@ -1,3 +1,3 @@
-(executable
- (name counter_and_form)
- (libraries quartz))
+(executables
+ (names counter_and_form starter_website)
+ (libraries quartz unix threads))

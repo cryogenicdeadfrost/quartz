@@ -245,7 +245,114 @@ let test_multicloud_deploy_and_html_headless () =
   let html_snippet = "<dialog id=\"d1\" open><p>Hi</p></dialog><img src=\"/x.png\" alt=\"X\"/>" in
   let ml_code = Import_html.convert_html_to_ocaml html_snippet in
   assert_true "Import_html maps <dialog> to Headless.dialog" (contains_sub ~sub:"Headless.dialog" ml_code);
-  assert_true "Import_html assigns default width/height on <img>" (contains_sub ~sub:"~width:320 ~height:180" ml_code)
+  assert_true "Import_html assigns default width/height on <img>" (contains_sub ~sub:"~width:320 ~height:180" ml_code);
+  assert_true "Deno Deploy also emits standalone quartz_edge.bc.js"
+    (Sys.file_exists (Filename.concat deno_dir "quartz_edge.bc.js"))
+
+let test_sql_and_database_drivers () =
+  (* 1. Dialect compilation & injection-safe interpolation *)
+  let q = Sql.q "SELECT * FROM users WHERE email = ? AND score >= ?" [ Sql.Text "o'hara@test.io"; Sql.Int 42 ] in
+  let pg_sql, _ = Sql.compile Sql.Postgres q in
+  assert_true "Postgres dialect rewrites ? to $1, $2"
+    (contains_sub ~sub:"$1" pg_sql && contains_sub ~sub:"$2" pg_sql);
+  let interp = Sql.interpolate Sql.Sqlite q in
+  assert_true "Interpolation escapes single quotes safely"
+    (contains_sub ~sub:"'o''hara@test.io'" interp);
+
+  (* 2. Schema DDL generator *)
+  let schema =
+    Sql.table ~indexes:[ ("idx_users_email", [ "email" ], true) ] "users"
+      [
+        Sql.col ~primary_key:true ~autoincrement:true "id" Sql.Col_integer;
+        Sql.col ~not_null:true ~unique:true "email" Sql.Col_text;
+      ]
+  in
+  let ddl = Sql.create_table_ddl Sql.Postgres schema in
+  assert_true "Postgres DDL uses SERIAL PRIMARY KEY"
+    (List.exists (contains_sub ~sub:"SERIAL PRIMARY KEY") ddl);
+
+  (* 3. Embedded relational engine + transactions *)
+  let emb = Sql.Embedded.create () in
+  Sql.Embedded.define_table emb schema;
+  let id1 = Sql.Embedded.insert emb "users" [ ("email", Sql.Text "ada@ocaml.org") ] in
+  assert_true "Embedded insert returns primary key 1" (id1 = Ok 1);
+  let dup = Sql.Embedded.insert emb "users" [ ("email", Sql.Text "ada@ocaml.org") ] in
+  assert_true "Embedded enforces UNIQUE constraint" (Result.is_error dup);
+  let tx_res =
+    Sql.Embedded.transaction emb (fun db ->
+      ignore (Sql.Embedded.insert db "users" [ ("email", Sql.Text "temp@ocaml.org") ]);
+      Error "abort_tx")
+  in
+  assert_true "Transaction returns Error on abort" (Result.is_error tx_res);
+  let rows_after_tx = Sql.Embedded.select emb "users" () in
+  assert_true "Transaction rolled back uncommitted row" (List.length rows_after_tx = 1);
+
+  (* 4. Live Db_driver (Node 22 node:sqlite + migrations + parameterized queries) *)
+  let drv = Db_driver.connect (Db_driver.Node_sqlite ":memory:") in
+  let mig_res =
+    Db_driver.migrate drv
+      [
+        (1, "init_items", "CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, label TEXT NOT NULL, qty INTEGER NOT NULL);");
+      ]
+  in
+  assert_true "Db_driver.migrate applies migration 1" (mig_res = Ok 1);
+  let mig_again =
+    Db_driver.migrate drv
+      [
+        (1, "init_items", "CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, label TEXT NOT NULL, qty INTEGER NOT NULL);");
+      ]
+  in
+  assert_true "Db_driver.migrate is idempotent" (mig_again = Ok 0);
+  ignore (Db_driver.exec drv (Sql.q "INSERT INTO items (label, qty) VALUES (?, ?)" [ Sql.Text "gpu-node"; Sql.Int 8 ]));
+  ignore (Db_driver.exec drv (Sql.q "INSERT INTO items (label, qty) VALUES (?, ?)" [ Sql.Text "edge-pop"; Sql.Int 24 ]));
+  let item_rows =
+    match Db_driver.query drv (Sql.q "SELECT * FROM items WHERE qty >= ? ORDER BY qty DESC" [ Sql.Int 10 ]) with
+    | Ok r -> r
+    | Error _ -> []
+  in
+  assert_true "Db_driver parameterized query filters rows" (List.length item_rows = 1);
+  assert_true "Db_driver row decodes string column"
+    (Sql.get_string "label" (List.hd item_rows) = Some "edge-pop");
+
+  (* 5. Hrana v2 HTTP pipeline (LibSQL / Turso / Cloudflare D1) *)
+  let hrana_req = Db_driver.encode_hrana_pipeline [ Sql.q "SELECT id, name FROM orgs WHERE id = ?" [ Sql.Int 7 ] ] in
+  assert_true "Hrana pipeline encodes execute + close requests"
+    (contains_sub ~sub:"\"type\":\"execute\"" hrana_req && contains_sub ~sub:"\"type\":\"close\"" hrana_req);
+  let sample_hrana_resp =
+    {|{"results":[{"type":"ok","response":{"type":"execute","result":{"cols":[{"name":"id"},{"name":"name"}],"rows":[[{"type":"integer","value":"7"},{"type":"text","value":"QuartzLab"}]]}}}]}|}
+  in
+  (match Db_driver.decode_hrana_response sample_hrana_resp with
+   | Ok (first_stmt :: _) ->
+     let row = List.hd first_stmt in
+     assert_true "Hrana response decodes integer & text columns"
+       (Sql.get_int "id" row = Some 7 && Sql.get_string "name" row = Some "QuartzLab")
+   | _ -> assert_true "Hrana response decode failed" false);
+
+  (* 6. Redis RESP2 Wire Protocol *)
+  let resp_cmd = Db_driver.encode_resp_command [ "SET"; "session:1"; "active" ] in
+  assert_true "RESP2 encodes array header *3" (contains_sub ~sub:"*3\r\n$3\r\nSET\r\n" resp_cmd);
+  (match Db_driver.decode_resp_reply "$6\r\nquartz\r\n" with
+   | Ok (Db_driver.Resp_bulk (Some "quartz")) -> assert_true "RESP2 decodes bulk string" true
+   | _ -> assert_true "RESP2 bulk decode failed" false)
+
+let test_scaffolder_and_webgpu () =
+  assert_true "WebGPU runtime includes WGSL vertex & fragment shaders"
+    (contains_sub ~sub:"@vertex fn vs_main" Browser_runtime.client_runtime_js
+     && contains_sub ~sub:"createRenderPipeline" Browser_runtime.client_runtime_js
+     && contains_sub ~sub:"drawIndexed" Browser_runtime.client_runtime_js);
+  let base_tmp = Filename.concat (Filename.get_temp_dir_name ()) "quartz_scaffolds_test" in
+  List.iter
+    (fun (t : Scaffolder.template_info) ->
+      let target_dir = Filename.concat base_tmp t.id in
+      match Scaffolder.scaffold_project ~template_id:t.id ~target_dir with
+      | Ok files ->
+        assert_true ("Scaffolder generated files for " ^ t.id) (List.length files >= 5);
+        assert_true ("Scaffolder created bin/main.ml for " ^ t.id)
+          (Sys.file_exists (Filename.concat target_dir "bin/main.ml"))
+      | Error e ->
+        Printf.eprintf "Scaffolder error: %s\n" e;
+        assert_true ("Scaffolder failed for " ^ t.id) false)
+    Scaffolder.available_templates
 
 let () =
   test_npm_plug_and_browser_runtime ();
@@ -254,4 +361,6 @@ let () =
   test_optional_opam_adapters ();
   test_npm_server_plug_and_dts ();
   test_multicloud_deploy_and_html_headless ();
+  test_sql_and_database_drivers ();
+  test_scaffolder_and_webgpu ();
   Printf.printf "[OK] Quartz Adapters, Plugs & Known Gaps Suite: %d assertions passed!\n" !passed
