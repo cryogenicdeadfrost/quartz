@@ -227,6 +227,28 @@ let format_http_response ~status ~content_type ?(keep_alive = false) ?(headers =
   Buffer.add_string buf body;
   Buffer.contents buf
 
+(* HTTP/1.1 Transfer-Encoding: chunked helpers for Streaming SSR / Suspense *)
+let encode_chunked_chunk (data : string) : string =
+  if data = "" then ""
+  else Printf.sprintf "%x\r\n%s\r\n" (String.length data) data
+
+let encode_chunked_finish : string = "0\r\n\r\n"
+
+let format_streaming_headers ~status ~content_type ?(headers = []) () : string =
+  let buf = Buffer.create 256 in
+  Printf.bprintf buf "HTTP/1.1 %s\r\n" status;
+  let ct =
+    if String.length content_type >= 5 && String.sub content_type 0 5 = "text/" then
+      content_type ^ "; charset=utf-8"
+    else content_type
+  in
+  Printf.bprintf buf "Content-Type: %s\r\n" ct;
+  Printf.bprintf buf "Transfer-Encoding: chunked\r\n";
+  Printf.bprintf buf "Cache-Control: no-cache\r\n";
+  List.iter (fun (k, v) -> Printf.bprintf buf "%s: %s\r\n" k v) headers;
+  Printf.bprintf buf "Connection: close\r\n\r\n";
+  Buffer.contents buf
+
 let mime_of_path path =
   let lower = String.lowercase_ascii path in
   let ext =

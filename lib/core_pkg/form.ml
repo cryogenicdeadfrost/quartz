@@ -39,6 +39,121 @@ let chain (v1 : string validator) (v2 : 'a validator) : 'a validator =
     | Error e -> Error e
     | Ok s' -> v2 s'
 
+(* Pure-OCaml regex/pattern matcher supporting ^, $, ., *, +, ?, character classes [a-z0-9_], and escapes *)
+let matches_pattern ~(pattern : string) (input : string) : bool =
+  let plen = String.length pattern in
+  let anchored_start = plen > 0 && pattern.[0] = '^' in
+  let pat = if anchored_start then String.sub pattern 1 (plen - 1) else pattern in
+  let match_class p_idx ch =
+    let len = String.length pat in
+    let rec find_close j neg items =
+      if j >= len then None
+      else if pat.[j] = ']' && j > p_idx + (if neg then 2 else 1) then
+        Some (neg, items, j + 1)
+      else if j + 2 < len && pat.[j + 1] = '-' && pat.[j + 2] <> ']' then
+        find_close (j + 3) neg (`Range (pat.[j], pat.[j + 2]) :: items)
+      else
+        find_close (j + 1) neg (`Char pat.[j] :: items)
+    in
+    let neg, start =
+      if p_idx + 1 < len && pat.[p_idx + 1] = '^' then (true, p_idx + 2)
+      else (false, p_idx + 1)
+    in
+    match find_close start neg [] with
+    | None -> (ch = '[', p_idx + 1)
+    | Some (is_neg, items, next_p) ->
+      let hit =
+        List.exists
+          (function
+            | `Char c -> ch = c
+            | `Range (lo, hi) -> ch >= lo && ch <= hi)
+          items
+      in
+      ((if is_neg then not hit else hit), next_p)
+  in
+  let match_atom p_idx ch =
+    let len = String.length pat in
+    if p_idx >= len then None
+    else
+      match pat.[p_idx] with
+      | '\\' when p_idx + 1 < len ->
+        let esc = pat.[p_idx + 1] in
+        let ok =
+          match esc with
+          | 'd' -> ch >= '0' && ch <= '9'
+          | 'w' -> (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch = '_'
+          | 's' -> ch = ' ' || ch = '\t' || ch = '\n' || ch = '\r'
+          | lit -> ch = lit
+        in
+        Some (ok, p_idx + 2)
+      | '[' -> Some (match_class p_idx ch)
+      | '.' -> Some (true, p_idx + 1)
+      | lit -> Some (ch = lit, p_idx + 1)
+  in
+  let atom_span p_idx =
+    let len = String.length pat in
+    if p_idx >= len then (p_idx, '\000')
+    else
+      let next_p =
+        match pat.[p_idx] with
+        | '\\' when p_idx + 1 < len -> p_idx + 2
+        | '[' ->
+          let _, np = match_class p_idx 'a' in
+          np
+        | _ -> p_idx + 1
+      in
+      if next_p < len && (pat.[next_p] = '*' || pat.[next_p] = '+' || pat.[next_p] = '?') then
+        (next_p + 1, pat.[next_p])
+      else (next_p, '\000')
+  in
+  let ilen = String.length input in
+  let plen_p = String.length pat in
+  let rec match_here p_idx i_idx =
+    if p_idx >= plen_p then true
+    else if pat.[p_idx] = '$' && p_idx = plen_p - 1 then i_idx = ilen
+    else
+      let after_quant, quant = atom_span p_idx in
+      match quant with
+      | '*' -> match_star p_idx after_quant i_idx
+      | '+' ->
+        if i_idx < ilen then
+          match match_atom p_idx input.[i_idx] with
+          | Some (true, _) -> match_star p_idx after_quant (i_idx + 1)
+          | _ -> false
+        else false
+      | '?' ->
+        (i_idx < ilen &&
+         match match_atom p_idx input.[i_idx] with
+         | Some (true, _) -> match_here after_quant (i_idx + 1)
+         | _ -> false)
+        || match_here after_quant i_idx
+      | _ ->
+        if i_idx >= ilen then false
+        else
+          match match_atom p_idx input.[i_idx] with
+          | Some (true, np) -> match_here np (i_idx + 1)
+          | _ -> false
+  and match_star p_idx after_quant i_idx =
+    if match_here after_quant i_idx then true
+    else if i_idx < ilen then
+      match match_atom p_idx input.[i_idx] with
+      | Some (true, _) -> match_star p_idx after_quant (i_idx + 1)
+      | _ -> false
+    else false
+  in
+  if anchored_start then match_here 0 0
+  else
+    let rec scan i =
+      if i > ilen then false
+      else if match_here 0 i then true
+      else scan (i + 1)
+    in
+    scan 0
+
+let pattern ~pattern ?msg (s : string) =
+  let m = Option.value ~default:(Printf.sprintf "Value does not match pattern %s" pattern) msg in
+  if matches_pattern ~pattern s then Ok s else Error m
+
 type 'a field = {
   raw : string Signal.t;
   touched : bool Signal.t;

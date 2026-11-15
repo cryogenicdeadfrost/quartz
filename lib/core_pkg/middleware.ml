@@ -178,6 +178,42 @@ let request_id () : t =
     in
     next req |> with_header "X-Request-Id" rid
 
+(* Structured JSON Access Log Ring Buffer (observability without Unix IO) *)
+let access_log_ring : string Queue.t = Queue.create ()
+
+let push_access_log_entry entry =
+  Queue.add entry access_log_ring;
+  while Queue.length access_log_ring > 64 do
+    ignore (Queue.take access_log_ring)
+  done
+
+let recent_access_logs () : string list =
+  Queue.fold (fun acc x -> x :: acc) [] access_log_ring |> List.rev
+
+let access_log ?(clock = Io.Clock_hook.now_s) ?emit () : t =
+  fun next req ->
+    let t0 = clock () in
+    let res = next req in
+    let us = max 0 (int_of_float ((clock () -. t0) *. 1_000_000.0)) in
+    let req_like_headers = { req with headers = res.headers } in
+    let rid = Option.value ~default:"-" (header_opt "x-request-id" req_like_headers) in
+    let entry =
+      Json.to_string
+        (Json.obj
+           [
+             ("method", Json.string req.meth);
+             ("path", Json.string req.path);
+             ("status", Json.int (status_code_of_res res));
+             ("client_ip", Json.string req.client_ip);
+             ("duration_us", Json.int us);
+             ("request_id", Json.string rid);
+             ("bytes", Json.int (String.length res.body));
+           ])
+    in
+    push_access_log_entry entry;
+    (match emit with Some fn -> fn entry | None -> ());
+    res
+
 (* End-to-End Type-Safe RPC Endpoints (Next.js Server Actions / tRPC style) *)
 module Endpoint = struct
   type ('req, 'res) spec = {

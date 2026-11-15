@@ -228,3 +228,86 @@ let to_http_date (sec64 : int64) : string =
   Printf.sprintf "%s, %02d %s %04d %02d:%02d:%02d GMT"
     weekday_names.(dt.weekday) dt.day month_names.(dt.month)
     dt.year dt.hour dt.minute dt.second
+
+(* Pure-OCaml ISO-8601 UTC timestamp parser (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SSZ`) *)
+let parse_iso8601 (s : string) : int64 option =
+  let s = String.trim s in
+  let days_from_civil y m d =
+    let y = y - (if m <= 2 then 1 else 0) in
+    let era = (if y >= 0 then y else y - 399) / 400 in
+    let yoe = y - (era * 400) in
+    let doy = ((153 * (m + (if m > 2 then -3 else 9)) + 2) / 5) + d - 1 in
+    let doe = (yoe * 365) + (yoe / 4) - (yoe / 100) + doy in
+    Int64.sub (Int64.add (Int64.mul (Int64.of_int era) 146097L) (Int64.of_int doe)) 719468L
+  in
+  let parse_ymd ymd =
+    match String.split_on_char '-' ymd with
+    | [ ys; ms; ds ] when String.length ys = 4 && String.length ms = 2 && String.length ds = 2 ->
+      (match (int_of_string_opt ys, int_of_string_opt ms, int_of_string_opt ds) with
+       | Some y, Some m, Some d when m >= 1 && m <= 12 && d >= 1 && d <= 31 ->
+         Some (y, m, d)
+       | _ -> None)
+    | _ -> None
+  in
+  let parse_hms hms =
+    let hms =
+      let n = String.length hms in
+      if n > 0 && (hms.[n - 1] = 'Z' || hms.[n - 1] = 'z') then String.sub hms 0 (n - 1) else hms
+    in
+    let hms = match String.split_on_char '.' hms with hd :: _ -> hd | [] -> hms in
+    match String.split_on_char ':' hms with
+    | [ hs; ms; ss ] ->
+      (match (int_of_string_opt hs, int_of_string_opt ms, int_of_string_opt ss) with
+       | Some h, Some m, Some sec when h >= 0 && h <= 23 && m >= 0 && m <= 59 && sec >= 0 && sec <= 60 ->
+         Some (h, m, sec)
+       | _ -> None)
+    | _ -> None
+  in
+  match String.split_on_char 'T' s with
+  | [ ymd ] ->
+    (match parse_ymd ymd with
+     | Some (y, m, d) -> Some (Int64.mul (days_from_civil y m d) 86400L)
+     | None -> None)
+  | [ ymd; hms ] ->
+    (match (parse_ymd ymd, parse_hms hms) with
+     | Some (y, m, d), Some (hh, mm, ss) ->
+       let days = days_from_civil y m d in
+       Some (Int64.add (Int64.mul days 86400L) (Int64.of_int ((hh * 3600) + (mm * 60) + ss)))
+     | _ -> None)
+  | _ -> None
+
+(* Locale-aware number & decimal grouping across major locales *)
+let format_number ~locale ?(decimals = 0) (v : float) : string =
+  let neg = v < 0.0 in
+  let av = abs_float v in
+  let factor = 10.0 ** float_of_int (max 0 decimals) in
+  let rounded = floor ((av *. factor) +. 0.5) /. factor in
+  let raw = Printf.sprintf "%.*f" (max 0 decimals) rounded in
+  let int_part, frac_part =
+    match String.split_on_char '.' raw with
+    | [ ip; fp ] -> (ip, Some fp)
+    | _ -> (raw, None)
+  in
+  let sep_group, sep_dec =
+    let base =
+      match String.split_on_char '-' (String.lowercase_ascii locale) with
+      | b :: _ -> b
+      | [] -> "en"
+    in
+    match base with
+    | "de" | "es" | "pt" | "it" | "nl" | "tr" | "vi" | "id" -> (".", ",")
+    | "fr" | "ru" | "pl" | "uk" -> (" ", ",")
+    | _ -> (",", ".")
+  in
+  let ilen = String.length int_part in
+  let buf = Buffer.create (ilen + 8) in
+  for i = 0 to ilen - 1 do
+    if i > 0 && (ilen - i) mod 3 = 0 then Buffer.add_string buf sep_group;
+    Buffer.add_char buf int_part.[i]
+  done;
+  let core =
+    match frac_part with
+    | Some fp when decimals > 0 -> Buffer.contents buf ^ sep_dec ^ fp
+    | _ -> Buffer.contents buf
+  in
+  if neg then "-" ^ core else core

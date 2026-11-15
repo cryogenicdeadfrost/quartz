@@ -1,5 +1,22 @@
 # Changelog
 
+## 4.2.0 (2026-11-15) -- "Complete Universal Platform & Hardening"
+* **Auth, Monadic IO, Regex & Locale Formatting (`quartz.core`):**
+  * Pure-OCaml RFC 2898 / 6070 PBKDF2-HMAC-SHA256 (`Crypto_util.pbkdf2_sha256`, `hash_password`, `verify_password`, and `Io.PASSWORD_HASHER` / `Pbkdf2_hasher`).
+  * `Io.Ops (M : IO)` (`let*`, `let+`, `sequence`) and `Io.Async_storage_of_sync`.
+  * Pure-OCaml regex/glob `Form.matches_pattern` and `Form.pattern` validator.
+  * Locale-aware decimal/grouping `I18n.format_number` and `I18n.parse_iso8601`.
+* **Motion, WebGPU/WebGL2 3D, Streaming SSR & Routing (`quartz.core` & `quartz.browser`):**
+  * `@view-transition`, `@starting-style`, `Style.deduplicate_css`, `[data-q-flip]` FLIP layout transitions, `[data-q-magnetic="1"]` cursor pull physics, and `[data-q-draggable="1"]` pointer gestures.
+  * `Scene3d` WebGPU (`Wgsl_shader`), ThreeJS handoff (`window.THREE`), custom GLSL `shader` programs, and Sphere/Torus/Plane geometry builders alongside Box.
+  * `Headless.listbox` standalone WAI-ARIA control, `[data-q-trap-focus="1"]` Tab trap + Escape dismiss, `Router.route ~loader`, `Router.parallel_slot` / `Router.modal_slot`, and `Router.link` hover prefetching.
+  * Streaming SSR (`App.render_streaming_document` + `Http.encode_chunked_chunk` + `Server.send_streaming_ssr`).
+* **Observability, Asset Linking & CI Targets (`quartz.unix`):**
+  * `Middleware.request_id ()` (`X-Request-Id`), structured JSON `Middleware.access_log ()` ring buffer, and `/__quartz/inspector` telemetry JSON endpoint (including recent access logs).
+  * `Vite.run_vite_build` now links hashed `assets/styles.<hash>.css` and `assets/quartz-runtime.<hash>.js` directly into every exported static HTML document.
+  * `Dom.img` `srcset`/`sizes` attributes and explicit `width`/`height` CLS check in `Dom.diagnose`.
+  * Added `deploy ci` (`.github/workflows/ci.yml`), `deploy docker` (multi-stage static musl Dockerfile), and `test_quartz_v4` group #12/#13 (PBKDF2, Streaming SSR, asset-linked SSG, fuzz hardening).
+
 ## 4.0.0 (2026-11-15) -- "One Core, Many Targets"
 * **Multi-Package Split (`lib/`):**
   * **`quartz.core`** (`lib/core_pkg/`): 100% pure OCaml stdlib core with zero `Unix` and zero `Threads` dependencies (`Io`, `Json` RFC 8259 + JSONPath combinators, `Crypto_util` FIPS SHA-256/HMAC-SHA256/SHA-1/Base64, `Cookie` signed cookies + per-visitor `Session.Make`, `I18n` UTF-8/CLDR plurals/UTC RFC 7231 dates, `Signal`, `Resource`, `Contrast` OKLCH + APCA Lc + WCAG 2.1, `Style` RK4 spring physics + scroll/view timelines + `@keyframes`/`@property`/container queries, `Scene3d` declarative WebGL2 AST, `Dom` keyed snapshot diffing + islands + SEO meta, `Headless` WAI-ARIA primitives, `Router` GADT typed paths + 301/404 status resolution, `Form` honeypot + validation, `Charts`, `Components`, `Middleware` typed RPC `Endpoint` + ETag 304 + body limits + Guards/Interceptors, `Isr`, `Pubsub`, `Websocket` RFC 6455 + topic `Rooms`, `Multipart` + MIME magic-byte sniffing, `Http` RFC 9112 chunked/keep-alive/`Range` 206 parser, `Store` WAL + schema `Migrations`, `Jobs` retry queue + cron webhooks, `Tui`, `Custom_renderer`, and universal `App.Make` functor).

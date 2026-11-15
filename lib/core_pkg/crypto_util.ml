@@ -326,3 +326,75 @@ let sha1_bytes (msg : string) : string =
     write_be32 out (i * 4) h.(i)
   done;
   Bytes.unsafe_to_string out
+
+(* RFC 2898 / RFC 6070 PBKDF2-HMAC-SHA256 for password hashing (zero Unix dependency) *)
+let xor_bytes_in_place dst src len =
+  for i = 0 to len - 1 do
+    Bytes.set dst i
+      (Char.chr ((Char.code (Bytes.get dst i)) lxor (Char.code (String.get src i))))
+  done
+
+let pbkdf2_sha256 ~(password : string) ~(salt : string) ~(iterations : int) ~(dk_len : int) : string =
+  let iter = max 1 iterations in
+  let h_len = 32 in
+  let blocks = (dk_len + h_len - 1) / h_len in
+  let out = Buffer.create dk_len in
+  for blk = 1 to blocks do
+    let blk_buf = Bytes.create (String.length salt + 4) in
+    Bytes.blit_string salt 0 blk_buf 0 (String.length salt);
+    write_be32 blk_buf (String.length salt) (Int32.of_int blk);
+    let u = ref (hmac_sha256_bytes ~secret:password (Bytes.unsafe_to_string blk_buf)) in
+    let t = Bytes.of_string !u in
+    for _ = 2 to iter do
+      let next_u = hmac_sha256_bytes ~secret:password !u in
+      xor_bytes_in_place t next_u h_len;
+      u := next_u
+    done;
+    Buffer.add_bytes out t
+  done;
+  String.sub (Buffer.contents out) 0 dk_len
+
+let from_hex_opt (hex : string) : string option =
+  let len = String.length hex in
+  if len mod 2 <> 0 then None
+  else
+    let n = len / 2 in
+    let out = Bytes.create n in
+    let hex_val c =
+      match c with
+      | '0' .. '9' -> Some (Char.code c - Char.code '0')
+      | 'a' .. 'f' -> Some (10 + Char.code c - Char.code 'a')
+      | 'A' .. 'F' -> Some (10 + Char.code c - Char.code 'A')
+      | _ -> None
+    in
+    let rec loop i =
+      if i = n then Some (Bytes.unsafe_to_string out)
+      else
+        match (hex_val hex.[i * 2], hex_val hex.[(i * 2) + 1]) with
+        | Some hi, Some lo ->
+          Bytes.set out i (Char.chr ((hi lsl 4) lor lo));
+          loop (i + 1)
+        | _ -> None
+    in
+    loop 0
+
+let hash_password ?(iterations = 10_000) (password : string) : string =
+  let iter = max 1 iterations in
+  let salt = random_bytes 16 in
+  let dk = pbkdf2_sha256 ~password ~salt ~iterations:iter ~dk_len:32 in
+  Printf.sprintf "pbkdf2-sha256$%d$%s$%s" iter (to_hex salt) (to_hex dk)
+
+let verify_password ~(password : string) ~(stored_hash : string) : bool =
+  match String.split_on_char '$' stored_hash with
+  | [ "pbkdf2-sha256"; iter_s; salt_hex; expected_hex ] ->
+    (match (int_of_string_opt iter_s, from_hex_opt salt_hex) with
+     | Some iter, Some salt when iter > 0 ->
+       let dk = pbkdf2_sha256 ~password ~salt ~iterations:iter ~dk_len:32 in
+       equal_const_time expected_hex (to_hex dk)
+     | _ -> false)
+  | _ -> false
+
+module Pbkdf2_hasher : Io.PASSWORD_HASHER = struct
+  let hash_password = hash_password
+  let verify_password = verify_password
+end

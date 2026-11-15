@@ -8,12 +8,12 @@
 
 ---
 
-## Package Architecture (`v4.0.0`)
+## Package Architecture (`v4.2.0`)
 
 All subsystems preserve 100% `open Quartz` API compatibility while enforcing a strict zero-`Unix` boundary in `quartz.core`:
 
-* **`quartz.core`** (`lib/core_pkg/`): Pure stdlib OCaml core (zero `Unix`, zero `Threads`). Includes `Signal`, `Resource`, `Json` (RFC 8259 + JSONPath combinators), `Crypto_util` (FIPS SHA-256, HMAC-SHA256, SHA-1, Base64), `Cookie` + per-visitor `Session.Make`, `I18n` (UTF-8, CLDR plurals, UTC HTTP dates), `Contrast` (OKLCH scales, APCA Lc, WCAG 2.1), `Style` (RK4 springs, `@keyframes`, `@property`, container queries, scroll timelines), `Scene3d` (WebGL2 AST), `Dom` (keyed diff patching, islands, SEO meta), `Headless` (WAI-ARIA primitives), `Router` (GADT typed routes + 301/404), `Form` (validation + honeypot), `Charts`, `Components`, `Middleware` (typed RPC `Endpoint`, ETag 304, body limits, guards/interceptors), `Isr`, `Pubsub`, `Websocket` (RFC 6455 + topic rooms), `Multipart` + MIME sniffer, `Http` (RFC 9112 chunked/keep-alive/`Range` 206), `Store` (WAL + migrations), `Jobs` (retries + cron webhooks), `Tui`, `Custom_renderer`, and `App.Make`.
-* **`quartz.browser`** (`lib/browser_pkg/`): Shared runtime JS chunk (`client_runtime_js`) for DOM diffing, `[data-q-island]` hydration, 60fps WebGL2 `Scene3d` runner, keyboard roving tabindex, hover prefetching, and `Js_bridge` widgets.
+* **`quartz.core`** (`lib/core_pkg/`): Pure stdlib OCaml core (zero `Unix`, zero `Threads`). Includes `Signal`, `Resource`, `Json` (RFC 8259 + JSONPath combinators), `Crypto_util` (FIPS SHA-256, HMAC-SHA256, PBKDF2-HMAC-SHA256, SHA-1, Base64), `Cookie` + per-visitor `Session.Make`, `I18n` (UTF-8, CLDR plurals, number grouping, UTC HTTP/ISO-8601 dates), `Contrast` (OKLCH scales, APCA Lc, WCAG 2.1), `Style` (RK4 springs, `@keyframes`, `@property`, `@view-transition`, `@starting-style`, container queries, scroll timelines), `Scene3d` (WebGPU WGSL & WebGL2 AST), `Dom` (keyed diff patching, islands, image CLS diagnostics, SEO meta), `Headless` (WAI-ARIA primitives including standalone `listbox`), `Router` (GADT typed routes, `?loader`, `@modal`/parallel slots, 301/404), `Form` (regex pattern matcher, validation + honeypot), `Charts`, `Components`, `Middleware` (typed RPC `Endpoint`, ETag 304, `request_id`, JSON `access_log`, body limits, Guards/Interceptors), `Isr`, `Pubsub`, `Websocket` (RFC 6455 + topic rooms), `Multipart` + MIME sniffer, `Http` (RFC 9112 chunked/keep-alive/`Range` 206), `Store` (WAL + migrations), `Jobs` (retries + cron webhooks), `Tui`, `Custom_renderer`, and `App.Make` + streaming Suspense SSR.
+* **`quartz.browser`** (`lib/browser_pkg/`): Shared runtime JS chunk (`client_runtime_js`) for DOM diffing, `[data-q-island]` hydration, 60fps WebGPU/WebGL2/ThreeJS `Scene3d` runner (Box, Sphere, Torus, Plane, custom shaders), FLIP transitions, magnetic & drag gestures, `subscribeSse`, keyboard roving tabindex + focus traps, hover prefetching, HMR backoff reconnect, and `Js_bridge` widgets.
 * **`quartz.edge`** (`lib/edge_pkg/`): WinterCG Fetch JSON adapter (`Edge_adapter.Make`) for Vercel Edge, Cloudflare Workers, Deno Deploy, and Bun.
 * **`quartz.mirage`** (`lib/mirage_pkg/`): MirageOS 4 unikernel functor (`Mirage_adapter.Make`) plus `config.ml` and `unikernel.ml` generators.
 * **`quartz.vercel`** (`lib/vercel_pkg/`): AWS Lambda Runtime HTTP API (`bootstrap`) loop for native Linux binaries.
@@ -49,6 +49,8 @@ dune exec quartz -- deploy cloudflare
 dune exec quartz -- deploy fly
 dune exec quartz -- deploy mirage
 dune exec quartz -- deploy pages
+dune exec quartz -- deploy ci
+dune exec quartz -- deploy docker
 dune exec quartz -- new saas my_app
 
 # Convert HTML + Tailwind markup to Quartz OCaml code

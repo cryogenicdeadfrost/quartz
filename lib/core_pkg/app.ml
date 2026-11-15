@@ -25,6 +25,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   position: relative;
   background-image: radial-gradient(380px circle at var(--qx, -500px) var(--qy, -500px), rgba(56, 189, 248, 0.13), transparent 65%);
 }
+[data-q-magnetic="1"] {
+  transform: translate3d(var(--mx, 0px), var(--my, 0px), 0);
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
 @keyframes q_fade_in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -50,6 +55,8 @@ let render_full_document
     ?(meta : Dom.page_meta option)
     ?(live_script = "")
     ?(live = true)
+    ?(external_css_href = "")
+    ?(external_js_src = "")
     (view : Dom.node) : string * Dom.compiled_view =
   let c = Dom.compile_node view in
   let effective_meta =
@@ -58,9 +65,18 @@ let render_full_document
     | None -> Dom.default_meta ~title ()
   in
   let meta_html = Dom.render_meta_tags effective_meta in
-  let script_tag =
-    if live && live_script <> "" then Printf.sprintf "<script>%s</script>" live_script
+  let ext_css_tag =
+    if external_css_href <> "" then
+      Printf.sprintf "\n  <link rel=\"stylesheet\" href=\"%s\" />\n" (Dom.escape_html external_css_href)
     else ""
+  in
+  let script_tag =
+    let parts = ref [] in
+    if external_js_src <> "" then
+      parts := Printf.sprintf "<script defer src=\"%s\"></script>" (Dom.escape_html external_js_src) :: !parts;
+    if live && live_script <> "" then
+      parts := Printf.sprintf "<script>%s</script>" live_script :: !parts;
+    String.concat "\n  " (List.rev !parts)
   in
   let doc =
     Printf.sprintf
@@ -70,8 +86,7 @@ let render_full_document
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>%s</title>
-%s
-  <style>%s</style>
+%s%s  <style>%s</style>
   <style id="quartz-styles">%s</style>
 </head>
 <body>
@@ -82,12 +97,58 @@ let render_full_document
       (Dom.escape_html effective_meta.lang)
       (Dom.escape_html effective_meta.title)
       meta_html
+      ext_css_tag
       base_reset_css
       c.css
       c.html
       script_tag
   in
   (doc, c)
+
+(* Streaming SSR / Out-of-Order Suspense Chunks (shell first, then deferred slots) *)
+let render_streaming_document
+    ?(title = "Quartz App")
+    ?(meta : Dom.page_meta option)
+    ~(shell : Dom.node)
+    (deferred_slots : (string * (unit -> Dom.node)) list) : string list =
+  let shell_c = Dom.compile_node shell in
+  let effective_meta =
+    match meta with
+    | Some m -> m
+    | None -> Dom.default_meta ~title ()
+  in
+  let meta_html = Dom.render_meta_tags effective_meta in
+  let head_chunk =
+    Printf.sprintf
+      {|<!DOCTYPE html>
+<html lang="%s" class="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>%s</title>
+%s  <style>%s</style>
+  <style id="quartz-styles">%s</style>
+</head>
+<body>
+  <div id="quartz-root">%s</div>|}
+      (Dom.escape_html effective_meta.lang)
+      (Dom.escape_html effective_meta.title)
+      meta_html
+      base_reset_css
+      shell_c.css
+      shell_c.html
+  in
+  let slot_chunks =
+    List.map
+      (fun (slot_id, build_node) ->
+        let c = Dom.compile_node (build_node ()) in
+        let safe_id = Dom.escape_html slot_id in
+        Printf.sprintf
+          "<style>%s</style><template id=\"q-s-%s\">%s</template><script>(function(){var s=document.getElementById(%S),t=document.getElementById(%S);if(s&&t)s.innerHTML=t.innerHTML;})();</script>"
+          c.css safe_id c.html slot_id ("q-s-" ^ safe_id))
+      deferred_slots
+  in
+  (head_chunk :: slot_chunks) @ [ "</body>\n</html>" ]
 
 let dispatch_handler (handlers : (int, Dom.handler) Hashtbl.t) ~id ~raw_val =
   match Hashtbl.find_opt handlers id with

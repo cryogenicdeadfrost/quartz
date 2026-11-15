@@ -292,10 +292,12 @@ let td ?colspan ?style kids =
   el "td" ?style ~attrs:at kids
 
 (* media & inline SVG *)
-let img ~src ~alt ?width ?height ?(loading = "lazy") ?(decoding = "async") ?style () =
+let img ~src ~alt ?width ?height ?srcset ?sizes ?(loading = "lazy") ?(decoding = "async") ?style () =
   let at = ref [ Attr ("src", src); Attr ("alt", alt); Attr ("loading", loading); Attr ("decoding", decoding) ] in
   (match width with Some w -> at := Attr ("width", string_of_int w) :: !at | None -> ());
   (match height with Some h -> at := Attr ("height", string_of_int h) :: !at | None -> ());
+  (match srcset with Some s -> at := Attr ("srcset", s) :: !at | None -> ());
+  (match sizes with Some s -> at := Attr ("sizes", s) :: !at | None -> ());
   el "img" ?style ~attrs:!at []
 
 let svg ~view_box ?(width = "100%") ?(height = "100%") ?style kids =
@@ -771,6 +773,8 @@ let diagnose (root : node) : diag_report =
              :: !a_warns
        | None -> ());
       let has_alt = ref false in
+      let has_w = ref false in
+      let has_h = ref false in
       let has_label = ref false in
       let is_clickable = ref false in
       let has_role = ref false in
@@ -784,6 +788,8 @@ let diagnose (root : node) : diag_report =
           | Attr ("href", u) when String.length u > 0 && u.[0] = '/' ->
             if not (List.mem u !links) then links := u :: !links
           | Attr ("alt", a) when String.trim a <> "" -> has_alt := true
+          | Attr ("width", w) when String.trim w <> "" -> has_w := true
+          | Attr ("height", h) when String.trim h <> "" -> has_h := true
           | Attr (("aria-label" | "aria-labelledby" | "placeholder" | "title"), v) when String.trim v <> "" ->
             has_label := true
           | Attr ("role", _) -> has_role := true
@@ -791,6 +797,8 @@ let diagnose (root : node) : diag_report =
         attrs;
       if tag = "img" && not !has_alt then
         warns := "<img> element is missing a non-empty alt attribute" :: !warns;
+      if tag = "img" && not (!has_w && !has_h) then
+        warns := "<img> element is missing explicit width/height attributes (risk of CLS)" :: !warns;
       if tag = "button" && kids = [] && not !has_label then
         warns := "<button> element has no label or child nodes" :: !warns;
       if tag = "input" && not !has_label then (

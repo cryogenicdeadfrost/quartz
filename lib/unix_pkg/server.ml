@@ -18,11 +18,38 @@ let get_api_routes () = api_get_routes
 let client_runtime_js = Quartz_browser.Browser_runtime.client_runtime_js
 let base_reset_css = App.base_reset_css
 
-let render_full_document ?(title = "Quartz App") ?meta ?(live = true) (view : Dom.node) : string * Dom.compiled_view =
-  App.render_full_document ~title ?meta ~live_script:client_runtime_js ~live view
+let render_full_document
+    ?(title = "Quartz App")
+    ?meta
+    ?(live = true)
+    ?(external_css_href = "")
+    ?(external_js_src = "")
+    (view : Dom.node) : string * Dom.compiled_view =
+  App.render_full_document
+    ~title
+    ?meta
+    ~live_script:client_runtime_js
+    ~live
+    ~external_css_href
+    ~external_js_src
+    view
 
-let export_page ~path ?(title = "Quartz App") ?meta (app : unit -> Dom.node) =
-  let doc, _ = render_full_document ~title ?meta ~live:false (app ()) in
+let export_page
+    ~path
+    ?(title = "Quartz App")
+    ?meta
+    ?(external_css_href = "")
+    ?(external_js_src = "")
+    (app : unit -> Dom.node) =
+  let doc, _ =
+    render_full_document
+      ~title
+      ?meta
+      ~live:false
+      ~external_css_href
+      ~external_js_src
+      (app ())
+  in
   let oc = open_out_bin path in
   output_string oc doc;
   close_out oc;
@@ -249,19 +276,18 @@ let run_browser
               ("isrHits", Json.int isr_st.hits);
               ("isrMisses", Json.int isr_st.misses);
               ("apiGetEndpoints", Json.array api_paths);
-              ("recentEvents",
-               Json.array
-                 (List.map
-                    (fun (ev : Pubsub.event) ->
-                      Json.obj
-                        [
-                          ("id", Json.int ev.id);
-                          ("topic", Json.string ev.topic);
-                          ("payload", Json.string ev.payload);
-                        ])
-                    (Pubsub.recent_events ())));
+              ("recentEvents", Json.array (List.map (fun (ev : Pubsub.event) -> Json.obj [ ("id", Json.int ev.id); ("topic", Json.string ev.topic); ("payload", Json.string ev.payload) ]) (Pubsub.recent_events ())));
+              ("accessLogs", Json.array (List.map Json.string (Middleware.recent_access_logs ())));
             ]))
   in
+  let send_streaming_ssr client_fd ~title ?meta ~shell deferred_slots =
+    let hdr = Http.format_streaming_headers ~status:"200 OK" ~content_type:"text/html" () in
+    write_all_substring client_fd hdr;
+    let chunks = App.render_streaming_document ~title ?meta ~shell deferred_slots in
+    List.iter (fun ch -> write_all_substring client_fd (Http.encode_chunked_chunk ch)) chunks;
+    write_all_substring client_fd Http.encode_chunked_finish
+  in
+  ignore send_streaming_ssr;
   let app_instance =
     App_impl.create
       {

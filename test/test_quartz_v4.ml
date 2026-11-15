@@ -524,6 +524,127 @@ let test_v4_2_motion_webgpu_listbox_loader_and_fuzz () =
         (Option.is_none (Cookie.verify ~secret:"fuzz-secret" inp)))
     fuzz_inputs
 
+let test_v4_2_final_complete_features () =
+  (* 1. RFC 6070 PBKDF2-HMAC-SHA256 exact vector + password hashing *)
+  let dk1 =
+    Crypto_util.to_hex
+      (Crypto_util.pbkdf2_sha256 ~password:"password" ~salt:"salt" ~iterations:1 ~dk_len:32)
+  in
+  assert_eq_str "RFC PBKDF2-HMAC-SHA256 c=1 vector"
+    ~expected:"120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
+    ~actual:dk1;
+  let stored = Crypto_util.hash_password ~iterations:32 "hunter2-quartz" in
+  assert_true "Password verify matches valid password"
+    (Crypto_util.verify_password ~password:"hunter2-quartz" ~stored_hash:stored);
+  assert_true "Password verify rejects wrong password"
+    (not (Crypto_util.verify_password ~password:"wrong" ~stored_hash:stored));
+  let module H : Io.PASSWORD_HASHER = Crypto_util.Pbkdf2_hasher in
+  assert_true "Pbkdf2_hasher functor interface works"
+    (H.verify_password ~password:"abc" ~stored_hash:(H.hash_password ~iterations:8 "abc"));
+
+  (* 2. Io.Ops + Async_storage_of_sync *)
+  let module Ops = Io.Ops (Io.Sync_io) in
+  let async_res =
+    let open Ops in
+    let* a = return 20 in
+    let+ b = return 22 in
+    a + b
+  in
+  assert_eq_int "Io.Ops monadic bind/map" ~expected:42 ~actual:async_res;
+  let module Mem = Store.Wal_store (Unix_adapters.Unix_clock) in
+  let module Async_mem = Io.Async_storage_of_sync (Mem) (Io.Sync_io) in
+  Async_mem.set "async_k" "ok";
+  assert_eq_str "Async_storage_of_sync get" ~expected:"ok"
+    ~actual:(Option.get (Async_mem.get "async_k"));
+
+  (* 3. Form regex/pattern + I18n number & ISO-8601 round-trip *)
+  assert_true "Form.matches_pattern anchored slug"
+    (Form.matches_pattern ~pattern:"^[a-z0-9-]+$" "quartz-v42");
+  assert_true "Form.matches_pattern rejects uppercase"
+    (not (Form.matches_pattern ~pattern:"^[a-z0-9-]+$" "Quartz"));
+  assert_true "Form.pattern validator passes"
+    (Result.is_ok (Form.pattern ~pattern:"^\\d+$" "12345"));
+  assert_eq_str "I18n German decimal/thousands" ~expected:"12.345,67"
+    ~actual:(I18n.format_number ~locale:"de-DE" ~decimals:2 12345.67);
+  assert_eq_str "I18n US decimal/thousands" ~expected:"12,345.67"
+    ~actual:(I18n.format_number ~locale:"en-US" ~decimals:2 12345.67);
+  let sample_epoch = 1763164800L in
+  let iso_s = I18n.to_iso8601 sample_epoch in
+  assert_true "I18n.parse_iso8601 round-trips to_iso8601"
+    (I18n.parse_iso8601 iso_s = Some sample_epoch);
+
+  (* 4. Router prefetch, parallel/modal slots, Streaming SSR & Chunked HTTP *)
+  let link_c = Dom.compile_node (Router.link ~to_:"/docs" [ Dom.text "Docs" ]) in
+  assert_true "Router.link emits data-q-prefetch"
+    (contains_sub ~sub:"data-q-prefetch=\"1\"" link_c.html);
+  let slot_c =
+    Dom.compile_node
+      (Router.parallel_slot ~name:"sidebar"
+         [ Router.modal_slot ~is_open:true ~on_close:ignore [ Dom.text "Modal Body" ] ])
+  in
+  assert_true "Parallel + modal slot attributes emitted"
+    (contains_sub ~sub:"data-q-slot=\"modal\"" slot_c.html);
+  let chunked = Http.encode_chunked_chunk "hello" ^ Http.encode_chunked_finish in
+  assert_eq_str "Chunked wire encoding" ~expected:"5\r\nhello\r\n0\r\n\r\n" ~actual:chunked;
+  let stream_chunks =
+    App.render_streaming_document
+      ~title:"Stream"
+      ~shell:(Dom.div ~id:"feed-slot" [ Dom.text "Loading..." ])
+      [ ("feed-slot", fun () -> Dom.p [ Dom.text "Loaded async!" ]) ]
+  in
+  let stream_all = String.concat "" stream_chunks in
+  assert_true "Streaming SSR swaps template into slot"
+    (contains_sub ~sub:"Loaded async!" stream_all && contains_sub ~sub:"q-s-feed-slot" stream_all);
+
+  (* 5. Middleware structured JSON access_log + Image CLS check *)
+  let mw_log =
+    Middleware.pipeline
+      [ Middleware.request_id (); Middleware.access_log () ]
+      (fun _ -> Middleware.ok "{\"ok\":true}")
+  in
+  ignore (mw_log { Middleware.meth = "GET"; path = "/logged"; query = []; headers = []; body = ""; client_ip = "10.0.0.1" });
+  let logs = Middleware.recent_access_logs () in
+  assert_true "Middleware access_log records JSON entry"
+    (List.exists (fun s -> contains_sub ~sub:"\"/logged\"" s) logs);
+  let img_ok = Dom.img ~src:"/a.png" ~alt:"Ok" ~width:320 ~height:180 () in
+  let img_missing = Dom.img ~src:"/b.png" ~alt:"MissingDims" () in
+  assert_eq_int "Img with explicit dimensions has 0 a11y/CLS warnings"
+    ~expected:0 ~actual:(List.length (Dom.diagnose img_ok).a11y_warnings);
+  assert_true "Img missing dimensions triggers CLS warning"
+    (List.exists (fun w -> contains_sub ~sub:"CLS" w) (Dom.diagnose img_missing).a11y_warnings);
+
+  (* 6. Browser runtime completeness (3D geoms, magnetic, drag, SSE) *)
+  List.iter
+    (fun needle ->
+      assert_true ("Browser runtime has " ^ needle)
+        (contains_sub ~sub:needle Browser_runtime.client_runtime_js))
+    [ "makeSphereGeom"; "makeTorusGeom"; "makePlaneGeom"; "data-q-magnetic"; "data-q-draggable"; "subscribeSse" ];
+
+  (* 7. Static Vite build HTML asset linking & Project Scaffold *)
+  let tmp_base = Filename.concat (Filename.get_temp_dir_name ()) (Printf.sprintf "quartz_v42_test_%d" (Unix.getpid ())) in
+  let site_dir = Filename.concat tmp_base "dist" in
+  Vite.run_vite_build ~out_dir:site_dir ~title:"StaticLinkTest"
+    [ ("index.html", "/", fun () -> Dom.h1 [ Dom.text "Static" ]) ];
+  let ic = open_in_bin (Filename.concat site_dir "index.html") in
+  let html = really_input_string ic (in_channel_length ic) in
+  close_in ic;
+  assert_true "Static build HTML links hashed stylesheet"
+    (contains_sub ~sub:"assets/styles." html && contains_sub ~sub:"assets/quartz-runtime." html);
+  let scaf_dir = Filename.concat tmp_base "my_saas" in
+  ignore (Deploy.scaffold_project ~dir:scaf_dir ~template:`Saas);
+  assert_true "Scaffolded Saas has dune-project and bin/main.ml"
+    (Sys.file_exists (Filename.concat scaf_dir "dune-project")
+     && Sys.file_exists (Filename.concat scaf_dir "bin/dune")
+     && Sys.file_exists (Filename.concat scaf_dir "bin/main.ml"));
+  let docs_dir = Filename.concat tmp_base "my_docs" in
+  ignore (Deploy.scaffold_project ~dir:docs_dir ~template:`Docs);
+  assert_true "Scaffolded Docs has bin/main.ml"
+    (Sys.file_exists (Filename.concat docs_dir "bin/main.ml"));
+  let api_dir = Filename.concat tmp_base "my_api" in
+  ignore (Deploy.scaffold_project ~dir:api_dir ~template:`Api);
+  assert_true "Scaffolded Api has bin/main.ml"
+    (Sys.file_exists (Filename.concat api_dir "bin/main.ml"))
+
 let () =
   test_json_and_decode ();
   test_crypto_vectors ();
@@ -537,4 +658,5 @@ let () =
   test_universal_targets_edge_mirage_vercel_deploy_import ();
   test_app_live_session_deploy_and_middlewares ();
   test_v4_2_motion_webgpu_listbox_loader_and_fuzz ();
-  Printf.printf "[OK] Quartz v4.0-v4.2 Complete Suite: all %d assertions across 12 test groups passed!\n" !passed
+  test_v4_2_final_complete_features ();
+  Printf.printf "[OK] Quartz v4.0-v4.2 Complete Suite: all %d assertions across 13 test groups passed!\n" !passed

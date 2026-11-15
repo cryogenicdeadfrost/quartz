@@ -156,6 +156,16 @@ let client_runtime_js =
     registerIsland: function(name, mountFn) {
       window.__quartzIslands[name] = mountFn;
       hydrateIslands();
+    },
+    subscribeSse: function(url, onMsg) {
+      if (typeof EventSource !== 'function') return null;
+      const es = new EventSource(url);
+      es.onmessage = function(ev) {
+        let parsed = ev.data;
+        try { parsed = JSON.parse(ev.data); } catch (_) {}
+        if (typeof onMsg === 'function') onMsg(parsed, ev);
+      };
+      return es;
     }
   };
 
@@ -170,6 +180,18 @@ let client_runtime_js =
         let props = {};
         try { props = JSON.parse(el.getAttribute('data-q-props') || '{}'); } catch (_) {}
         fn(el, props);
+      } else if (!el.__qOfflineBound) {
+        el.__qOfflineBound = true;
+        // Zero-server interactive tabs fallback when running statically
+        el.querySelectorAll('[role="tab"]').forEach(function(tab) {
+          tab.addEventListener('click', function() {
+            const list = tab.closest('[role="tablist"]');
+            if (!list) return;
+            list.querySelectorAll('[role="tab"]').forEach(function(t) {
+              t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+            });
+          });
+        });
       }
     });
   }
@@ -209,20 +231,79 @@ let client_runtime_js =
     ]);
   }
 
-  function makeBoxGeom() {
+  function makeBoxGeom(w, h, d) {
+    const hw = (w || 2) * 0.5, hh = (h || 2) * 0.5, hd = (d || 2) * 0.5;
     const p = [
-      -1,-1,1,  1,-1,1,  1,1,1, -1,1,1,
-      -1,-1,-1,-1,1,-1, 1,1,-1, 1,-1,-1,
-      -1,1,-1, -1,1,1,  1,1,1,  1,1,-1,
-      -1,-1,-1, 1,-1,-1, 1,-1,1,-1,-1,1,
-       1,-1,-1, 1,1,-1,  1,1,1,  1,-1,1,
-      -1,-1,-1,-1,-1,1, -1,1,1, -1,1,-1
+      -hw,-hh,hd,  hw,-hh,hd,  hw,hh,hd, -hw,hh,hd,
+      -hw,-hh,-hd,-hw,hh,-hd,  hw,hh,-hd, hw,-hh,-hd,
+      -hw,hh,-hd, -hw,hh,hd,   hw,hh,hd,  hw,hh,-hd,
+      -hw,-hh,-hd, hw,-hh,-hd, hw,-hh,hd,-hw,-hh,hd,
+       hw,-hh,-hd, hw,hh,-hd,  hw,hh,hd,  hw,-hh,hd,
+      -hw,-hh,-hd,-hw,-hh,hd, -hw,hh,hd, -hw,hh,-hd
     ];
     const idx = [
       0,1,2, 0,2,3, 4,5,6, 4,6,7, 8,9,10, 8,10,11,
       12,13,14, 12,14,15, 16,17,18, 16,18,19, 20,21,22, 20,22,23
     ];
     return { pos: new Float32Array(p), idx: new Uint16Array(idx) };
+  }
+
+  function makeSphereGeom(radius, segs) {
+    const r = radius || 1.0, s = Math.max(8, segs || 18);
+    const p = [], idx = [];
+    for (let y = 0; y <= s; y++) {
+      const v = y / s, phi = v * Math.PI;
+      for (let x = 0; x <= s; x++) {
+        const u = x / s, theta = u * Math.PI * 2;
+        p.push(-r * Math.cos(theta) * Math.sin(phi), r * Math.cos(phi), r * Math.sin(theta) * Math.sin(phi));
+      }
+    }
+    for (let y = 0; y < s; y++) {
+      for (let x = 0; x < s; x++) {
+        const a = y * (s + 1) + x, b = a + s + 1;
+        idx.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    }
+    return { pos: new Float32Array(p), idx: new Uint16Array(idx) };
+  }
+
+  function makeTorusGeom(radius, tube, radialSegs, tubularSegs) {
+    const R = radius || 1.1, r = tube || 0.36;
+    const jSeg = Math.max(8, radialSegs || 16), iSeg = Math.max(12, tubularSegs || 24);
+    const p = [], idx = [];
+    for (let j = 0; j <= jSeg; j++) {
+      const v = (j / jSeg) * Math.PI * 2;
+      for (let i = 0; i <= iSeg; i++) {
+        const u = (i / iSeg) * Math.PI * 2;
+        p.push((R + r * Math.cos(v)) * Math.cos(u), r * Math.sin(v), (R + r * Math.cos(v)) * Math.sin(u));
+      }
+    }
+    for (let j = 1; j <= jSeg; j++) {
+      for (let i = 1; i <= iSeg; i++) {
+        const a = (iSeg + 1) * j + i - 1;
+        const b = (iSeg + 1) * (j - 1) + i - 1;
+        const c = (iSeg + 1) * (j - 1) + i;
+        const d = (iSeg + 1) * j + i;
+        idx.push(a, b, d, b, c, d);
+      }
+    }
+    return { pos: new Float32Array(p), idx: new Uint16Array(idx) };
+  }
+
+  function makePlaneGeom(w, h) {
+    const hw = (w || 3) * 0.5, hh = (h || 3) * 0.5;
+    return {
+      pos: new Float32Array([-hw, 0, -hh, hw, 0, -hh, hw, 0, hh, -hw, 0, hh]),
+      idx: new Uint16Array([0, 1, 2, 0, 2, 3])
+    };
+  }
+
+  function geomForSpec(g) {
+    if (!g) return makeBoxGeom(1.5, 1.5, 1.5);
+    if (g.kind === 'sphere') return makeSphereGeom(g.radius || 1.0, g.segments || 18);
+    if (g.kind === 'torus') return makeTorusGeom(g.radius || 1.0, g.tube || 0.35, 14, 24);
+    if (g.kind === 'plane') return makePlaneGeom(g.w || 3.0, g.h || 3.0);
+    return makeBoxGeom(g.w || 1.4, g.h || 1.4, g.d || 1.4);
   }
 
   function hexToRgb01(hex) {
@@ -235,33 +316,76 @@ let client_runtime_js =
     ];
   }
 
+  function buildMeshProgram(gl, vsSrc, fsSrc) {
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compileShader(gl, gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(prog, compileShader(gl, gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(prog);
+    return prog;
+  }
+
   function mountScene3d(canvas, spec) {
+    if (spec.renderer === 'threejs' && window.THREE) {
+      try {
+        const renderer = new window.THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setSize(canvas.width, canvas.height, false);
+        const scene = new window.THREE.Scene();
+        scene.background = new window.THREE.Color(spec.background || '#020617');
+        const camSpec = spec.camera || {};
+        const camera = new window.THREE.PerspectiveCamera(camSpec.fov || 45, canvas.width / Math.max(1, canvas.height), camSpec.near || 0.1, camSpec.far || 100);
+        const cp = camSpec.pos || [0, 0, 5];
+        camera.position.set(cp[0], cp[1], cp[2]);
+        scene.add(new window.THREE.AmbientLight(0xffffff, 0.6));
+        const dl = new window.THREE.DirectionalLight(0xffffff, 0.9);
+        dl.position.set(3, 5, 4);
+        scene.add(dl);
+        const meshItems = (spec.meshes || []).map(function(m) {
+          const g = m.geometry || {};
+          const geom = g.kind === 'sphere' ? new window.THREE.SphereGeometry(g.radius || 1, 24, 24)
+            : g.kind === 'torus' ? new window.THREE.TorusGeometry(g.radius || 1, g.tube || 0.35, 16, 36)
+            : g.kind === 'plane' ? new window.THREE.PlaneGeometry(g.w || 3, g.h || 3)
+            : new window.THREE.BoxGeometry(g.w || 1.4, g.h || 1.4, g.d || 1.4);
+          const mat = new window.THREE.MeshStandardMaterial({ color: (m.material && m.material.color) || '#38bdf8' });
+          const tm = new window.THREE.Mesh(geom, mat);
+          const mp = m.pos || [0, 0, 0];
+          tm.position.set(mp[0], mp[1], mp[2]);
+          scene.add(tm);
+          return { mesh: tm, spin: m.spin || [0.4, 0.8, 0.1] };
+        });
+        function tickThree() {
+          meshItems.forEach(function(it) {
+            it.mesh.rotation.x += 0.016 * it.spin[0];
+            it.mesh.rotation.y += 0.016 * it.spin[1];
+          });
+          renderer.render(scene, camera);
+          requestAnimationFrame(tickThree);
+        }
+        requestAnimationFrame(tickThree);
+        return;
+      } catch (_) {}
+    }
     const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
     if (!gl) return;
-    const vs = 'attribute vec3 aPos; uniform float uT; uniform mat4 uProj; varying vec3 vCol; uniform vec3 uCol; uniform vec3 uPos; uniform vec3 uSpin; void main(){ float ax=uT*uSpin.x, ay=uT*uSpin.y; vec3 p=aPos; float cy=cos(ay),sy=sin(ay); p=vec3(p.x*cy-p.z*sy, p.y, p.x*sy+p.z*cy); float cx=cos(ax),sx=sin(ax); p=vec3(p.x, p.y*cx-p.z*sx, p.y*sx+p.z*cx); p += uPos; gl_Position = uProj * vec4(p, 1.0); vCol = uCol * (0.65 + 0.35 * normalize(aPos).y); }';
-    const fs = 'precision mediump float; varying vec3 vCol; void main(){ gl_FragColor = vec4(vCol, 1.0); }';
-    const prog = gl.createProgram();
-    gl.attachShader(prog, compileShader(gl, gl.VERTEX_SHADER, vs));
-    gl.attachShader(prog, compileShader(gl, gl.FRAGMENT_SHADER, fs));
-    gl.linkProgram(prog);
-    gl.useProgram(prog);
-    const geom = makeBoxGeom();
-    const vb = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, vb);
-    gl.bufferData(gl.ARRAY_BUFFER, geom.pos, gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'aPos');
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
-    const ib = gl.createBuffer();
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geom.idx, gl.STATIC_DRAW);
+    const defaultVs = 'attribute vec3 aPos; uniform float uT; uniform mat4 uProj; varying vec3 vCol; uniform vec3 uCol; uniform vec3 uPos; uniform vec3 uSpin; void main(){ float ax=uT*uSpin.x, ay=uT*uSpin.y; vec3 p=aPos; float cy=cos(ay),sy=sin(ay); p=vec3(p.x*cy-p.z*sy, p.y, p.x*sy+p.z*cy); float cx=cos(ax),sx=sin(ax); p=vec3(p.x, p.y*cx-p.z*sx, p.y*sx+p.z*cx); p += uPos; gl_Position = uProj * vec4(p, 1.0); vCol = uCol * (0.65 + 0.35 * normalize(aPos).y); }';
+    const defaultFs = 'precision mediump float; varying vec3 vCol; void main(){ gl_FragColor = vec4(vCol, 1.0); }';
+    const defaultProg = buildMeshProgram(gl, defaultVs, defaultFs);
+    const compiledMeshes = (spec.meshes || []).map(function(m) {
+      const geom = geomForSpec(m.geometry);
+      const vb = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+      gl.bufferData(gl.ARRAY_BUFFER, geom.pos, gl.STATIC_DRAW);
+      const ib = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geom.idx, gl.STATIC_DRAW);
+      let prog = defaultProg;
+      if (m.material && m.material.kind === 'shader' && m.material.vertex && m.material.fragment) {
+        const custom = buildMeshProgram(gl, m.material.vertex, m.material.fragment);
+        if (gl.getProgramParameter(custom, gl.LINK_STATUS)) prog = custom;
+      }
+      return { m: m, geom: geom, vb: vb, ib: ib, prog: prog };
+    });
     gl.enable(gl.DEPTH_TEST);
     const bg = hexToRgb01(spec.background || '#020617');
-    const uT = gl.getUniformLocation(prog, 'uT');
-    const uProj = gl.getUniformLocation(prog, 'uProj');
-    const uCol = gl.getUniformLocation(prog, 'uCol');
-    const uPos = gl.getUniformLocation(prog, 'uPos');
-    const uSpin = gl.getUniformLocation(prog, 'uSpin');
     const tStart = performance.now();
     function frame(now) {
       const t = (now - tStart) / 1000.0;
@@ -270,17 +394,23 @@ let client_runtime_js =
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       const cam = spec.camera || {};
       const proj = mat4Perspective(cam.fov || 45, canvas.width / Math.max(1, canvas.height), cam.near || 0.1, cam.far || 100);
-      gl.uniformMatrix4fv(uProj, false, proj);
-      gl.uniform1f(uT, t);
-      (spec.meshes || []).forEach(function(m) {
-        const mc = hexToRgb01((m.material && m.material.color) || '#38bdf8');
-        const mp = m.pos || [0, 0, 0];
-        const cp = cam.pos || [0, 0, 5];
-        const ms = m.spin || [0.4, 0.8, 0.1];
-        gl.uniform3f(uCol, mc[0], mc[1], mc[2]);
-        gl.uniform3f(uPos, mp[0] - cp[0], mp[1] - cp[1], mp[2] - cp[2]);
-        gl.uniform3f(uSpin, ms[0], ms[1], ms[2]);
-        gl.drawElements(gl.TRIANGLES, geom.idx.length, gl.UNSIGNED_SHORT, 0);
+      const cp = cam.pos || [0, 0, 5];
+      compiledMeshes.forEach(function(item) {
+        const prog = item.prog;
+        gl.useProgram(prog);
+        gl.bindBuffer(gl.ARRAY_BUFFER, item.vb);
+        const loc = gl.getAttribLocation(prog, 'aPos');
+        if (loc >= 0) { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0); }
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, item.ib);
+        const uT = gl.getUniformLocation(prog, 'uT'); if (uT) gl.uniform1f(uT, t);
+        const uProj = gl.getUniformLocation(prog, 'uProj'); if (uProj) gl.uniformMatrix4fv(uProj, false, proj);
+        const mc = hexToRgb01((item.m.material && item.m.material.color) || '#38bdf8');
+        const uCol = gl.getUniformLocation(prog, 'uCol'); if (uCol) gl.uniform3f(uCol, mc[0], mc[1], mc[2]);
+        const mp = item.m.pos || [0, 0, 0];
+        const uPos = gl.getUniformLocation(prog, 'uPos'); if (uPos) gl.uniform3f(uPos, mp[0] - cp[0], mp[1] - cp[1], mp[2] - cp[2]);
+        const ms = item.m.spin || [0.4, 0.8, 0.1];
+        const uSpin = gl.getUniformLocation(prog, 'uSpin'); if (uSpin) gl.uniform3f(uSpin, ms[0], ms[1], ms[2]);
+        gl.drawElements(gl.TRIANGLES, item.geom.idx.length, gl.UNSIGNED_SHORT, 0);
       });
       requestAnimationFrame(frame);
     }
@@ -404,6 +534,47 @@ let client_runtime_js =
         sendEvent(mm.getAttribute('data-q-mousemove'), Math.round(e.clientX - r.left) + ',' + Math.round(e.clientY - r.top), false);
       }
     }
+    // Magnetic cursor pull physics for [data-q-magnetic="1"]
+    if (!window.matchMedia || !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.querySelectorAll('[data-q-magnetic="1"]').forEach(function(mag) {
+        const r = mag.getBoundingClientRect();
+        const cx = r.left + r.width * 0.5, cy = r.top + r.height * 0.5;
+        const dx = e.clientX - cx, dy = e.clientY - cy;
+        const dist = Math.hypot(dx, dy);
+        if (dist < Math.max(r.width, r.height) * 1.15) {
+          mag.style.setProperty('--mx', (dx * 0.22).toFixed(1) + 'px');
+          mag.style.setProperty('--my', (dy * 0.22).toFixed(1) + 'px');
+        } else {
+          mag.style.setProperty('--mx', '0px');
+          mag.style.setProperty('--my', '0px');
+        }
+      });
+    }
+  });
+
+  // Pointer drag-and-drop gestures for [data-q-draggable="1"]
+  let dragTarget = null, dragStartX = 0, dragStartY = 0;
+  document.addEventListener('pointerdown', function(e) {
+    const dg = e.target.closest('[data-q-draggable="1"]');
+    if (dg) {
+      dragTarget = dg;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dg.style.cursor = 'grabbing';
+    }
+  });
+  document.addEventListener('pointermove', function(e) {
+    if (!dragTarget) return;
+    const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+    dragTarget.style.transform = 'translate3d(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px,0)';
+  });
+  document.addEventListener('pointerup', function(e) {
+    if (!dragTarget) return;
+    const cb = dragTarget.getAttribute('data-q-drag');
+    const dx = Math.round(e.clientX - dragStartX), dy = Math.round(e.clientY - dragStartY);
+    dragTarget.style.cursor = 'grab';
+    if (cb) sendEvent(cb, dx + ',' + dy, false);
+    dragTarget = null;
   });
 
   document.addEventListener('click', function(e) {

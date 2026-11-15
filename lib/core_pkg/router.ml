@@ -249,7 +249,7 @@ let router ?(not_found = default_404) (routes : route_def list) =
     in
     find routes)
 
-let link ~to_ ?(active_style = Style.[ color Palette.sky_400; font_semibold ]) ?(style = []) kids =
+let link ~to_ ?(prefetch = true) ?(active_style = Style.[ color Palette.sky_400; font_semibold ]) ?(style = []) kids =
   Dom.rx (fun () ->
     let cur = Signal.get active_path in
     let target_base =
@@ -261,7 +261,44 @@ let link ~to_ ?(active_style = Style.[ color Palette.sky_400; font_semibold ]) ?
       @ style
       @ (if is_active then active_style else [])
     in
-    Dom.a ~href:to_ ~style:merged ~on_click:(fun () -> navigate to_) kids)
+    Dom.a ~href:to_ ~prefetch ~style:merged ~on_click:(fun () -> navigate to_) kids)
+
+(* Next.js-style Parallel & Intercepting @modal Slots *)
+let parallel_slot ~name (children : Dom.node list) : Dom.node =
+  Dom.div ~attrs:[ Dom.attr "data-q-slot" name ] children
+
+let modal_slot ~is_open ~on_close (children : Dom.node list) : Dom.node =
+  if not is_open then Dom.empty
+  else
+    Dom.div
+      ~attrs:[ Dom.attr "role" "dialog"; Dom.attr "aria-modal" "true"; Dom.attr "data-q-trap-focus" "1"; Dom.attr "data-q-slot" "modal" ]
+      ~style:
+        Style.[
+          raw_css "position" "fixed";
+          raw_css "inset" "0";
+          raw_css "z-index" "50";
+          raw_css "background" "rgba(2, 6, 23, 0.72)";
+          raw_css "backdrop-filter" "blur(6px)";
+          flex_col;
+          items_center;
+          justify_center;
+          p 24;
+        ]
+      [
+        Dom.div
+          ~style:
+            Style.[
+              bg Palette.slate_900;
+              border ~width:1 ~color:Palette.slate_700 ();
+              rounded_lg;
+              p 24;
+              max_w 560;
+              w_full;
+            ]
+          (Dom.div ~style:Style.[ flex_row; justify_end; mb 12 ]
+             [ Dom.button ~on_click:on_close ~attrs:[ Dom.attr "aria-label" "Close modal" ] [ Dom.text "Close" ] ]
+           :: children);
+      ]
 
 let breadcrumbs () =
   Dom.rx (fun () ->

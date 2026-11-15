@@ -22,6 +22,7 @@ let setup_backend () =
   use_middleware (Middleware.security_headers ());
   use_middleware (Middleware.request_id ());
   use_middleware (Middleware.req_timer ());
+  use_middleware (Middleware.access_log ());
   use_middleware (Middleware.rate_cop ~max_burst:120.0 ~refill_per_sec:30.0 ());
 
   api_get "/api/health" (fun _params ->
@@ -116,7 +117,7 @@ let app_shell child_view =
     ~style:Style.[ h_screen; bg Palette.slate_950; color Palette.slate_100 ]
     [
       navbar
-        ~brand:"Quartz v4.0"
+        ~brand:"Quartz v4.2"
         ~right:
           (div ~style:Style.[ flex_row; items_center; gap 10 ] [
              avatar ~initials:"AB" ~online:true ();
@@ -189,14 +190,16 @@ let overview_page _ =
                     contrast_badge ~bg_color:Palette.sky_400 "4 CUSTOM RENDERERS";
                   ];
                   h1 ~style:Style.[ text_4xl; bold; m 0; color Palette.white ]
-                    [ text "Quartz v4.0 Reactive Platform & Universal Runtime" ];
+                    [ text "Quartz v4.2 Reactive Platform & Universal Runtime" ];
                   p ~style:Style.[ text_base; color Palette.slate_300; m 0 ]
-                    [ text "One OCaml core targeting Native Unix, MirageOS Unikernels, Vercel, Cloudflare Workers, Scene3d WebGL2 & Headless WAI-ARIA UI." ];
+                    [ text "One OCaml core targeting Native Unix, MirageOS Unikernels, Vercel, Cloudflare Workers, Scene3d WebGPU/WebGL2 & Headless WAI-ARIA UI." ];
                 ];
               div
                 ~style:Style.[ flex_col; gap 10; items_end ]
+                ~attrs:[ Dom.attr "data-q-flip" "hero-cta" ]
                 [
-                  btn ~variant:Primary ~on_click:(fun () -> modal_open <~ true) "+ Deploy Service";
+                  div ~attrs:[ Dom.attr "data-q-magnetic" "1" ]
+                    [ btn ~variant:Primary ~on_click:(fun () -> modal_open <~ true) "+ Deploy Service" ];
                   btn ~variant:Success
                     ~on_click:(fun () -> push_telemetry_spike 18.5 "Ingested +18.5k rps edge burst")
                     "Trigger Traffic Burst";
@@ -674,6 +677,17 @@ let network_page _ =
                   ~summary_kids:[ text "Zero-JS Progressive Disclosure (<details>)" ]
                   [ text "Headless primitives work immediately on static HTML exports with full ARIA semantics." ];
               ];
+              div ~style:Style.[ mt 12 ] [
+                Headless.listbox
+                  ~id:"runtime-target-listbox"
+                  ~aria_label:"Select Target Runtime"
+                  ~style:Style.[ flex_row; gap 8; flex_wrap; p 0 ]
+                  [
+                    ("Native Unix", true, None);
+                    ("MirageOS 4", false, None);
+                    ("Cloudflare Edge", false, None);
+                  ];
+              ];
             ];
         ];
     ]
@@ -765,15 +779,15 @@ let read_whole_file path =
 
 let print_usage () =
   print_endline
-    {|Quartz v4.0 CLI -- One OCaml Core, Many Targets
+    {|Quartz v4.2 CLI -- One OCaml Core, Many Targets
 
 Usage:
   quartz dev [port] [--hmr]            Start LiveView HTTP/1.1 + WS + SSE dev server
   quartz serve [port]                  Start HTTP server (default port 8080)
-  quartz check                         Run 5-stage Doctor (Routes, Links, WCAG + APCA, A11y)
+  quartz check                         Run 6-stage Doctor (Routes, Links, WCAG + APCA, A11y)
   quartz build                         Emit static HTML, CSS, hashed JS runtime, sitemap & llms.txt
   quartz deploy <target> [out_dir]     Generate deployment artifacts:
-                                         pages | vercel | cloudflare | fly | mirage
+                                         pages | ci | vercel | cloudflare | docker | fly | mirage
   quartz import-html <file.html>       Convert HTML + Tailwind classes into Quartz OCaml code
   quartz new <saas|docs|api> <dir>     Scaffold a new Quartz v4 starter application
   quartz tui | markdown | canvas | json Render `/` via alternate backend|}
@@ -787,19 +801,19 @@ let () =
   | _ :: "dev" :: port_s :: "--hmr" :: _ ->
     let port = Option.value ~default:8080 (int_of_string_opt port_s) in
     let _stop_hmr = Vite.start_hmr_watcher () in
-    run_browser ~port ~title:"Quartz v4.0 Studio (HMR)" studio_app
+    run_browser ~port ~title:"Quartz v4.2 Studio (HMR)" studio_app
   | _ :: "dev" :: "--hmr" :: _ ->
     let _stop_hmr = Vite.start_hmr_watcher () in
-    run_browser ~port:8080 ~title:"Quartz v4.0 Studio (HMR)" studio_app
+    run_browser ~port:8080 ~title:"Quartz v4.2 Studio (HMR)" studio_app
   | _ :: ("dev" | "serve") :: port_s :: _ ->
     let port = Option.value ~default:8080 (int_of_string_opt port_s) in
-    run_browser ~port ~title:"Quartz v4.0 Studio" studio_app
+    run_browser ~port ~title:"Quartz v4.2 Studio" studio_app
   | _ :: ("dev" | "serve") :: _ ->
-    run_browser ~port:8080 ~title:"Quartz v4.0 Studio" studio_app
+    run_browser ~port:8080 ~title:"Quartz v4.2 Studio" studio_app
   | _ :: "check" :: _ ->
     run_vite_check ~port:8080 ~routes:app_routes ~sample_paths studio_app
   | _ :: "build" :: _ ->
-    run_vite_build ~out_dir:"dist_site" ~title:"Quartz v4.0 Studio" static_export_specs
+    run_vite_build ~out_dir:"dist_site" ~title:"Quartz v4.2 Studio" static_export_specs
   | _ :: "deploy" :: target :: rest ->
     let out_dir = match rest with d :: _ -> d | [] -> "deploy_out" in
     (match String.lowercase_ascii target with

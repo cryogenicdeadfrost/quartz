@@ -55,17 +55,41 @@ let run_vite_build
   let total_bytes = ref 0 in
   let manifest_entries = ref [] in
   let all_css_rules = ref [ App.base_reset_css ] in
+  let prepared_pages =
+    List.map
+      (fun (filename, route_path, view_fn) ->
+        let p0 = Unix.gettimeofday () in
+        Router.navigate route_path;
+        let node = view_fn () in
+        let compiled = Dom.compile_node node in
+        if compiled.css <> "" then all_css_rules := !all_css_rules @ String.split_on_char '\n' compiled.css;
+        let dt = (Unix.gettimeofday () -. p0) *. 1000.0 in
+        (filename, route_path, node, dt))
+      pages
+  in
+  let deduped_css = String.concat "\n" (Style.deduplicate_css !all_css_rules) in
+  let base_css_hash = String.sub (Crypto_util.sha256_hex deduped_css) 0 8 in
+  let base_css_rel = Printf.sprintf "assets/styles.%s.css" base_css_hash in
+  write_text_file (Filename.concat out_dir base_css_rel) deduped_css;
+
+  let relative_prefix filename =
+    let depth = max 0 (List.length (String.split_on_char '/' filename) - 1) in
+    String.concat "" (List.init depth (fun _ -> "../"))
+  in
   List.iter
-    (fun (filename, route_path, view_fn) ->
-      let p0 = Unix.gettimeofday () in
-      Router.navigate route_path;
-      let node = view_fn () in
-      let compiled = Dom.compile_node node in
-      if compiled.css <> "" then all_css_rules := !all_css_rules @ String.split_on_char '\n' compiled.css;
+    (fun (filename, route_path, node, dt) ->
       let full_path = Filename.concat out_dir filename in
       let meta = Dom.{ (default_meta ~title ()) with canonical = Some (base_url ^ route_path) } in
-      let n_bytes = Server.export_page ~path:full_path ~title ~meta (fun () -> node) in
-      let dt = (Unix.gettimeofday () -. p0) *. 1000.0 in
+      let pref = relative_prefix filename in
+      let n_bytes =
+        Server.export_page
+          ~path:full_path
+          ~title
+          ~meta
+          ~external_css_href:(pref ^ base_css_rel)
+          ~external_js_src:(pref ^ rt_rel)
+          (fun () -> node)
+      in
       total_bytes := !total_bytes + n_bytes;
       manifest_entries :=
         Json.obj
@@ -77,12 +101,7 @@ let run_vite_build
         :: !manifest_entries;
       Printf.printf "  [OK] %-28s %-14s %6.2f kB  |  rendered in %.2f ms\n"
         full_path ("(" ^ route_path ^ ")") (float_of_int n_bytes /. 1024.0) dt)
-    pages;
-
-  let deduped_css = String.concat "\n" (Style.deduplicate_css !all_css_rules) in
-  let base_css_hash = String.sub (Crypto_util.sha256_hex deduped_css) 0 8 in
-  let base_css_rel = Printf.sprintf "assets/styles.%s.css" base_css_hash in
-  write_text_file (Filename.concat out_dir base_css_rel) deduped_css;
+    prepared_pages;
 
   let sitemap_urls =
     String.concat "\n"

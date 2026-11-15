@@ -190,3 +190,35 @@ module type SIGNER = sig
   val sign : secret:string -> payload:string -> string
   val verify : secret:string -> payload:string -> sig_hex:string -> bool
 end
+
+module type PASSWORD_HASHER = sig
+  val hash_password : ?iterations:int -> string -> string
+  val verify_password : password:string -> stored_hash:string -> bool
+end
+
+module Ops (M : IO) = struct
+  let return = M.return
+  let bind = M.bind
+  let ( let* ) = M.bind
+  let ( let+ ) x f = M.bind x (fun a -> M.return (f a))
+  let map f x = M.bind x (fun a -> M.return (f a))
+
+  let rec sequence = function
+    | [] -> M.return []
+    | x :: xs ->
+      let* h = x in
+      let+ t = sequence xs in
+      h :: t
+end
+
+module Async_storage_of_sync (S : SYNC_STORAGE) (M : IO) :
+  STORAGE with type 'a io = 'a M.t = struct
+  type 'a io = 'a M.t
+
+  let get key = M.return (S.get key)
+  let set ?ttl_s key value = M.return (S.set ?ttl_s key value)
+  let delete key = M.return (S.delete key)
+  let list_prefix prefix = M.return (S.list_prefix prefix)
+  let append_log ~topic entry = M.return (S.append_log ~topic entry)
+  let read_log ~topic = M.return (S.read_log ~topic)
+end
