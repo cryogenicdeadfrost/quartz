@@ -6,12 +6,14 @@ Quartz is a full-stack web framework for OCaml (`>= 4.13` and `5.x`). It lets yo
 
 ## Why Quartz Exists
 
-Most web projects in OCaml stall for one of two reasons:
+Most web projects in OCaml stall for one of three reasons:
 1. You have to stitch together a dozen separate libraries for routing, HTML templating, forms, sessions, WebSockets, and CSS, or
 2. You hit a wall when you need a third-party JavaScript widget (Stripe, Chart.js, Monaco) or a standard SQLite/Postgres database and end up writing brittle boilerplate bindings.
+3. Cause I had waaaaay too much free time and I kinda like OCaml (screw you)
 
 Quartz takes a practical approach:
 - **Pure Core (`quartz.core`):** The reactive signal graph, HTML/CSS compiler, router, form validator, WCAG/APCA contrast math, cryptographic primitives (SHA-256, HMAC, PBKDF2), and SQL query/schema builder have **zero `Unix` or C dependencies**. They compile anywhere—native Linux/macOS/Windows servers, MirageOS unikernels, or serverless edge workers.
+
 - **Native Server & Tooling (`quartz.unix`):** A multi-threaded HTTP/1.1 + WebSocket (RFC 6455) + Server-Sent Events server, crash-safe Write-Ahead Log (WAL), multi-backend database driver (`node:sqlite`, PostgreSQL, LibSQL/Turso Hrana HTTP, Redis RESP2), static site bundler, and a 6-stage accessibility/contrast auditor.
 - **Universal JS/NPM Plug (`Npm_plug` & `Npm_server_plug`):** Instead of hand-porting 2.5 million npm packages to OCaml, Quartz mounts browser packages directly via native ESM importmaps (`esm.sh`) and calls server-side Node/Bun packages over a persistent NDJSON stdio worker pool.
 
@@ -194,15 +196,25 @@ Generate production configs and standalone Edge/Serverless bundles (`quartz_edge
 
 ```bash
 opam exec -- dune exec quartz -- deploy pages .          # GitHub Pages (.github/workflows/pages.yml)
+
 opam exec -- dune exec quartz -- deploy ci .             # GitHub Actions CI (.github/workflows/ci.yml)
+
 opam exec -- dune exec quartz -- deploy docker .         # Multi-stage Alpine/musl Dockerfile + fly.toml
+
 opam exec -- dune exec quartz -- deploy caddy .          # Caddyfile for automatic HTTP/2, HTTP/3 & Let's Encrypt TLS
+
 opam exec -- dune exec quartz -- deploy cloudflare ./cf  # Cloudflare Worker (wrangler.toml + worker.js + quartz_edge.bc.js)
+
 opam exec -- dune exec quartz -- deploy vercel ./vc      # Vercel Build Output API v3 (Edge / Node / Native)
+
 opam exec -- dune exec quartz -- deploy deno ./deno      # Deno Deploy (deno.json + main.ts + quartz_edge.bc.js)
+
 opam exec -- dune exec quartz -- deploy bun ./bun        # Bun.serve + bun:sqlite (server.ts + quartz_edge.bc.js)
+
 opam exec -- dune exec quartz -- deploy lambda ./sam     # AWS Lambda Custom Runtime (template.yaml)
+
 opam exec -- dune exec quartz -- deploy mirage ./mirage  # MirageOS 4 Unikernel (config.ml + unikernel.ml)
+
 ```
 
 ---
