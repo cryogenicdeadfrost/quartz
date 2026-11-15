@@ -16,6 +16,12 @@
   * `Vite.run_vite_build` now links hashed `assets/styles.<hash>.css` and `assets/quartz-runtime.<hash>.js` directly into every exported static HTML document.
   * `Dom.img` `srcset`/`sizes` attributes and explicit `width`/`height` CLS check in `Dom.diagnose`.
   * Added `deploy ci` (`.github/workflows/ci.yml`), `deploy docker` (multi-stage static musl Dockerfile), and `test_quartz_v4` group #12/#13 (PBKDF2, Streaming SSR, asset-linked SSG, fuzz hardening).
+* **Universal NPM / JS Plug Engine & Known Gaps Suite:**
+  * `Npm_plug` (`quartz.core`) + `browser_runtime` ESM/React/WebComponent CDN loader (`[data-q-plug]`), `Npm_server_plug` persistent Node/Bun/Deno NDJSON worker (`Io.PLUG_TRANSPORT`), and `Import_dts` CLI (`quartz gen-plug <pkg> <file.d.ts>`).
+  * `Debug_registry` + `window.devtoolsFormatters` + interactive HTML/JSON `/__quartz/inspector` dashboard.
+  * `Dom.cdn_image_url` (`Vercel`, `Cloudflare`, `Imgproxy`), `Dom.responsive_img`, build-time `Vite` `vips`/`convert`/`cwebp` optimizer, `Dom.intl_date`/`intl_number` + `window.Quartz.intl`, and full `Headless` combobox/tooltip/roving interactions.
+  * Optional `(optional)` opam adapter packages (`quartz.lwt`, `quartz.intl_uutf`, `quartz.re`, `quartz.std_adapters`) + official multi-cloud deploy emitters (`vercel`, `vercel-node`, `vercel-native`, `cloudflare`, `deno`, `bun`, `netlify`, `lambda`, `railway`, `caddy`).
+  * Verified with `test_adapters_and_plugs` (54 assertions including live Node.js worker IPC).
 
 ## 4.0.0 (2026-11-15) -- "One Core, Many Targets"
 * **Multi-Package Split (`lib/`):**

@@ -29,4 +29,6 @@
   jobs
   tui
   custom_renderer
-  app))
+  app
+  npm_plug
+  debug_registry))

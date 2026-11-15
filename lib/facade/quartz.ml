@@ -31,6 +31,8 @@ module Jobs = Quartz_core.Jobs
 module Tui = Quartz_core.Tui
 module Custom_renderer = Quartz_core.Custom_renderer
 module App = Quartz_core.App
+module Npm_plug = Quartz_core.Npm_plug
+module Debug_registry = Quartz_core.Debug_registry
 
 (* 2. Target Adapters (`quartz.browser`, `quartz.edge`, `quartz.mirage`, `quartz.vercel`, `quartz.unix`) *)
 module Browser_runtime = Quartz_browser.Browser_runtime
@@ -42,6 +44,8 @@ module Unix_adapters = Quartz_unix.Unix_adapters
 module Server = Quartz_unix.Server
 module Deploy = Quartz_unix.Deploy
 module Import_html = Quartz_unix.Import_html
+module Import_dts = Quartz_unix.Import_dts
+module Npm_server_plug = Quartz_unix.Npm_server_plug
 module Vite = Quartz_unix.Vite
 
 (* 3. Reactive & Async Hooks *)

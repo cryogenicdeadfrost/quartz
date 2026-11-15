@@ -133,6 +133,40 @@ let run_vite_build
   write_text_file (Filename.concat out_dir "llms.txt")
     (Deploy.generate_llms_txt ~title ~base_url llms_routes);
 
+  (* Build-time responsive image optimization when `vips`, `convert`, or `cwebp` is available *)
+  let has_bin name = Sys.command (Printf.sprintf "command -v %s >/dev/null 2>&1" (Filename.quote name)) = 0 in
+  let optimized_imgs = ref 0 in
+  if Sys.file_exists public_dir && Sys.is_directory public_dir then (
+    let tool =
+      if has_bin "vips" then `Vips
+      else if has_bin "convert" then `Imagemagick
+      else if has_bin "cwebp" then `Cwebp
+      else `None
+    in
+    if tool <> `None then
+      Array.iter
+        (fun entry ->
+          let ext = String.lowercase_ascii (Filename.extension entry) in
+          if ext = ".png" || ext = ".jpg" || ext = ".jpeg" then (
+            let src_img = Filename.concat public_dir entry in
+            let stem = Filename.remove_extension entry in
+            List.iter
+              (fun w ->
+                let dst_img = Filename.concat out_dir (Printf.sprintf "%s-%dw.webp" stem w) in
+                let cmd =
+                  match tool with
+                  | `Vips -> Printf.sprintf "vips thumbnail %s %s %d >/dev/null 2>&1" (Filename.quote src_img) (Filename.quote dst_img) w
+                  | `Imagemagick -> Printf.sprintf "convert %s -resize %dx %s >/dev/null 2>&1" (Filename.quote src_img) w (Filename.quote dst_img)
+                  | `Cwebp -> Printf.sprintf "cwebp -q 82 -resize %d 0 %s -o %s >/dev/null 2>&1" w (Filename.quote src_img) (Filename.quote dst_img)
+                  | `None -> "true"
+                in
+                if Sys.command cmd = 0 then incr optimized_imgs)
+              [ 480; 960 ]
+          ))
+        (Sys.readdir public_dir)
+  );
+  ignore !optimized_imgs;
+
   let total_ms = (Unix.gettimeofday () -. t0) *. 1000.0 in
   Printf.printf "  [OK] %-28s %-14s %6.2f kB  |  shared islands + Scene3d runtime\n"
     rt_rel "(JS Runtime)" (float_of_int (String.length runtime_js) /. 1024.0);

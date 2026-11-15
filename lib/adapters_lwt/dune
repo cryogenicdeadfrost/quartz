@@ -1,0 +1,6 @@
+(library
+ (name quartz_lwt)
+ (public_name quartz.lwt)
+ (optional)
+ (libraries quartz.core lwt)
+ (modules quartz_lwt))

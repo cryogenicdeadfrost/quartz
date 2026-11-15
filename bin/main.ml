@@ -787,8 +787,11 @@ Usage:
   quartz check                         Run 6-stage Doctor (Routes, Links, WCAG + APCA, A11y)
   quartz build                         Emit static HTML, CSS, hashed JS runtime, sitemap & llms.txt
   quartz deploy <target> [out_dir]     Generate deployment artifacts:
-                                         pages | ci | vercel | cloudflare | docker | fly | mirage
+                                         pages | ci | vercel | vercel-node | vercel-native |
+                                         cloudflare | deno | bun | netlify | lambda |
+                                         fly | docker | railway | caddy | mirage
   quartz import-html <file.html>       Convert HTML + Tailwind classes into Quartz OCaml code
+  quartz gen-plug <pkg> <file.d.ts>    Generate typed OCaml plug wrapper from TypeScript .d.ts
   quartz new <saas|docs|api> <dir>     Scaffold a new Quartz v4 starter application
   quartz tui | markdown | canvas | json Render `/` via alternate backend|}
 
@@ -824,11 +827,35 @@ let () =
        let f = Deploy.emit_github_ci ~out_dir () in
        Printf.printf "[OK] Emitted GitHub CI workflow -> %s\n" f
      | "vercel" ->
-       let d = Deploy.emit_vercel_output ~out_dir () in
-       Printf.printf "[OK] Emitted Vercel Build Output v3 -> %s\n" d
+       let d = Deploy.emit_vercel_output ~out_dir ~mode:`Edge () in
+       Printf.printf "[OK] Emitted Vercel Build Output v3 (Edge) -> %s\n" d
+     | "vercel-node" ->
+       let d = Deploy.emit_vercel_output ~out_dir ~mode:`Nodejs () in
+       Printf.printf "[OK] Emitted Vercel Build Output v3 (Node.js) -> %s\n" d
+     | "vercel-native" ->
+       let d = Deploy.emit_vercel_output ~out_dir ~mode:`Native () in
+       Printf.printf "[OK] Emitted Vercel Build Output v3 (Custom Lambda bootstrap) -> %s\n" d
      | "cloudflare" | "cf" ->
        let d = Deploy.emit_cloudflare_worker ~out_dir () in
        Printf.printf "[OK] Emitted Cloudflare Worker + wrangler.toml -> %s\n" d
+     | "deno" ->
+       let d = Deploy.emit_deno_deploy ~out_dir () in
+       Printf.printf "[OK] Emitted Deno Deploy deno.json + main.ts -> %s\n" d
+     | "bun" ->
+       let d = Deploy.emit_bun_serve ~out_dir () in
+       Printf.printf "[OK] Emitted Bun.serve + bun:sqlite server.ts -> %s\n" d
+     | "netlify" ->
+       let d = Deploy.emit_netlify_edge ~out_dir () in
+       Printf.printf "[OK] Emitted Netlify Edge netlify.toml -> %s\n" d
+     | "lambda" ->
+       let d = Deploy.emit_aws_sam_lambda ~out_dir () in
+       Printf.printf "[OK] Emitted AWS Lambda SAM template.yaml -> %s\n" d
+     | "railway" | "render" ->
+       let d = Deploy.emit_railway_render_cloudrun ~out_dir () in
+       Printf.printf "[OK] Emitted railway.toml + render.yaml -> %s\n" d
+     | "caddy" ->
+       let f = Deploy.emit_caddy_https ~out_dir () in
+       Printf.printf "[OK] Emitted Caddyfile (HTTP/2 + HTTP/3 + auto TLS) -> %s\n" f
      | "fly" | "docker" ->
        let d = Deploy.emit_docker_and_fly ~out_dir () in
        Printf.printf "[OK] Emitted static musl Dockerfile + fly.toml -> %s\n" d
@@ -836,11 +863,14 @@ let () =
        let d = Deploy.emit_mirage ~out_dir () in
        Printf.printf "[OK] Emitted MirageOS 4 config.ml + unikernel.ml -> %s\n" d
      | other ->
-       Printf.eprintf "Unknown deploy target %S (expected pages|ci|vercel|cloudflare|docker|fly|mirage)\n" other;
+       Printf.eprintf "Unknown deploy target %S\n" other;
        exit 1)
   | _ :: "import-html" :: file :: _ ->
     let html = read_whole_file file in
     print_endline (Import_html.convert_html_to_ocaml html)
+  | _ :: "gen-plug" :: pkg :: file :: _ ->
+    let dts = read_whole_file file in
+    print_endline (Import_dts.generate_ocaml_plug ~pkg dts)
   | _ :: "new" :: tmpl :: dir :: _ ->
     let template =
       match String.lowercase_ascii tmpl with

@@ -1,0 +1,6 @@
+(library
+ (name quartz_std_adapters)
+ (public_name quartz.std_adapters)
+ (optional)
+ (libraries quartz.core yojson logs)
+ (modules quartz_std_adapters))

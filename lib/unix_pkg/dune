@@ -2,4 +2,4 @@
  (name quartz_unix)
  (public_name quartz.unix)
  (libraries quartz.core quartz.browser quartz.edge quartz.mirage unix threads)
- (modules unix_adapters server deploy import_html vite))
+ (modules unix_adapters server deploy import_html import_dts npm_server_plug vite))

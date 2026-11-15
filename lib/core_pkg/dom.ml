@@ -300,6 +300,76 @@ let img ~src ~alt ?width ?height ?srcset ?sizes ?(loading = "lazy") ?(decoding =
   (match sizes with Some s -> at := Attr ("sizes", s) :: !at | None -> ());
   el "img" ?style ~attrs:!at []
 
+let cdn_image_url ~(provider : [ `Vercel | `Cloudflare | `Imgproxy of string ]) ~width ?(quality = 80) (src : string) : string =
+  let enc =
+    let buf = Buffer.create (String.length src * 2) in
+    String.iter
+      (fun c ->
+        match c with
+        | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' | '_' | '.' | '~' -> Buffer.add_char buf c
+        | _ -> Printf.bprintf buf "%%%02X" (Char.code c))
+      src;
+    Buffer.contents buf
+  in
+  match provider with
+  | `Vercel -> Printf.sprintf "/_vercel/image?url=%s&w=%d&q=%d" enc width quality
+  | `Cloudflare -> Printf.sprintf "/cdn-cgi/image/width=%d,quality=%d,format=auto/%s" width quality src
+  | `Imgproxy base -> Printf.sprintf "%s/insecure/rs:fit:%d:0/q:%d/plain/%s" base width quality src
+
+let responsive_img
+    ?provider
+    ?(widths = [ 480; 960; 1440 ])
+    ~src
+    ~alt
+    ~width
+    ~height
+    ?sizes
+    ?style
+    () =
+  let srcset_str =
+    match provider with
+    | Some p ->
+      String.concat ", "
+        (List.map (fun w -> Printf.sprintf "%s %dw" (cdn_image_url ~provider:p ~width:w src) w) widths)
+    | None ->
+      let base, ext =
+        match String.rindex_opt src '.' with
+        | Some idx -> (String.sub src 0 idx, String.sub src idx (String.length src - idx))
+        | None -> (src, "")
+      in
+      String.concat ", "
+        (List.map (fun w -> Printf.sprintf "%s-%dw%s %dw" base w ext w) widths)
+  in
+  let main_src =
+    match provider with
+    | Some p -> cdn_image_url ~provider:p ~width src
+    | None -> src
+  in
+  img ~src:main_src ~alt ~width ~height ~srcset:srcset_str ?sizes ?style ()
+
+(* Browser-native Intl delegation helpers with deterministic UTC/ASCII SSR fallback *)
+let intl_date ~epoch_s ?(date_style = "medium") ?style () =
+  el "time" ?style
+    ~attrs:
+      [
+        Attr ("datetime", I18n.to_iso8601 epoch_s);
+        Attr ("data-q-intl-date", Int64.to_string epoch_s);
+        Attr ("data-q-intl-style", date_style);
+      ]
+    [ Text (I18n.to_iso8601 epoch_s) ]
+
+let intl_number ~value ?currency ?style () =
+  let base_attrs =
+    [ Attr ("data-q-intl-num", Printf.sprintf "%.6g" value) ]
+    @ (match currency with Some c -> [ Attr ("data-q-intl-currency", c) ] | None -> [])
+  in
+  let fallback =
+    match currency with
+    | Some c -> Printf.sprintf "%s %.2f" c value
+    | None -> I18n.format_number ~locale:"en-US" ~decimals:2 value
+  in
+  el "span" ?style ~attrs:base_attrs [ Text fallback ]
+
 let svg ~view_box ?(width = "100%") ?(height = "100%") ?style kids =
   el "svg" ?style
     ~attrs:[ Attr ("viewBox", view_box); Attr ("width", width); Attr ("height", height); Attr ("xmlns", "http://www.w3.org/2000/svg") ]

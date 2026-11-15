@@ -17,8 +17,13 @@ All subsystems preserve 100% `open Quartz` API compatibility while enforcing a s
 * **`quartz.edge`** (`lib/edge_pkg/`): WinterCG Fetch JSON adapter (`Edge_adapter.Make`) for Vercel Edge, Cloudflare Workers, Deno Deploy, and Bun.
 * **`quartz.mirage`** (`lib/mirage_pkg/`): MirageOS 4 unikernel functor (`Mirage_adapter.Make`) plus `config.ml` and `unikernel.ml` generators.
 * **`quartz.vercel`** (`lib/vercel_pkg/`): AWS Lambda Runtime HTTP API (`bootstrap`) loop for native Linux binaries.
-* **`quartz.unix`** (`lib/unix_pkg/`): Multi-threaded HTTP/1.1 + WebSocket + SSE server, on-disk WAL `File_storage`, `Vite` 6-stage doctor (routes, page budget, WCAG + APCA, a11y, API/ISR, socket probe), hashed asset bundler + `llms.txt`, `Unix.stat` HMR watcher, `Deploy` generators, `Import_html` codegen, and `new` project templates.
-* **`quartz`** (`lib/facade/`): Top-level public facade re-exporting all v3 and v4 APIs.
+* **`quartz.unix`** (`lib/unix_pkg/`): Multi-threaded HTTP/1.1 + WebSocket + SSE server (HTML/JSON `/__quartz/inspector`), on-disk WAL `File_storage`, `Vite` 6-stage doctor + optional `vips`/`imagemagick`/`cwebp` image optimizer, hashed asset bundler + `llms.txt`, `Unix.stat` HMR watcher, `Deploy` multi-cloud generators (`vercel`, `vercel-node`, `vercel-native`, `cloudflare`, `deno`, `bun`, `netlify`, `lambda`, `fly`, `railway`, `caddy`, `mirage`, `pages`, `ci`), `Import_html` codegen, `Import_dts` (`.d.ts` -> typed OCaml plug generator), and `Npm_server_plug` persistent Node/Bun/Deno backend IPC worker.
+* **Optional Ecosystem Adapters (`lib/adapters_*`, `(optional)`):**
+  * **`quartz.lwt`** (`Lwt_io`, `Lwt_ops`, async storage over `lwt`)
+  * **`quartz.intl_uutf`** (`Uutf_unicode : Io.UNICODE` over `uutf` + `uucp`)
+  * **`quartz.re`** (`Re_regex : Io.REGEX` + `pcre_validator` over `re`)
+  * **`quartz.std_adapters`** (`Yojson_codec : Io.JSON_CODEC` + `Logs_logger : Io.LOGGER` over `yojson` + `logs`)
+* **`quartz`** (`lib/facade/`): Top-level public facade re-exporting all v3 and v4 APIs (`Npm_plug`, `Debug_registry`, `Npm_server_plug`, `Import_dts`, etc.).
 
 ---
 
@@ -44,8 +49,16 @@ dune exec quartz -- build
 dune exec quartz -- dev 8080 --hmr
 
 # Generate cloud / unikernel deploy artifacts & starter scaffolds
-dune exec quartz -- deploy vercel
-dune exec quartz -- deploy cloudflare
+dune exec quartz -- deploy vercel        # Edge Build Output v3
+dune exec quartz -- deploy vercel-node   # Node.js 22.x Serverless
+dune exec quartz -- deploy vercel-native # Custom Lambda bootstrap
+dune exec quartz -- deploy cloudflare    # wrangler.toml (KV/D1/ASSETS) + worker.js
+dune exec quartz -- deploy deno          # deno.json + Deno.serve
+dune exec quartz -- deploy bun           # Bun.serve + bun:sqlite
+dune exec quartz -- deploy netlify       # netlify.toml + Edge function
+dune exec quartz -- deploy lambda        # AWS SAM template.yaml
+dune exec quartz -- deploy railway       # railway.toml + render.yaml
+dune exec quartz -- deploy caddy         # Caddyfile (HTTP/2 + HTTP/3 + auto TLS)
 dune exec quartz -- deploy fly
 dune exec quartz -- deploy mirage
 dune exec quartz -- deploy pages
@@ -53,8 +66,9 @@ dune exec quartz -- deploy ci
 dune exec quartz -- deploy docker
 dune exec quartz -- new saas my_app
 
-# Convert HTML + Tailwind markup to Quartz OCaml code
+# Convert HTML + Tailwind or TypeScript .d.ts packages to OCaml
 dune exec quartz -- import-html snippet.html
+dune exec quartz -- gen-plug @stripe/react-stripe-js stripe.d.ts
 
 # Alternate renderers for `/`
 dune exec quartz -- tui

@@ -234,6 +234,18 @@ let encode_chunked_chunk (data : string) : string =
 
 let encode_chunked_finish : string = "0\r\n\r\n"
 
+(* HTTP/2 Cleartext (h2c) preface & Upgrade header helpers *)
+let h2_connection_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+let is_h2_preface (raw : string) : bool =
+  let plen = String.length h2_connection_preface in
+  String.length raw >= plen && String.sub raw 0 plen = h2_connection_preface
+
+let is_h2c_upgrade (req : parsed_request) : bool =
+  match header_opt "upgrade" req.headers with
+  | Some v -> String.lowercase_ascii (String.trim v) = "h2c"
+  | None -> false
+
 let format_streaming_headers ~status ~content_type ?(headers = []) () : string =
   let buf = Buffer.create 256 in
   Printf.bprintf buf "HTTP/1.1 %s\r\n" status;

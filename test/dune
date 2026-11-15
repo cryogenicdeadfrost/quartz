@@ -1,3 +1,9 @@
 (tests
  (names test_quartz test_quartz_v4)
+ (modules test_quartz test_quartz_v4)
  (libraries quartz quartz.edge quartz.mirage quartz.vercel))
+
+(test
+ (name test_adapters_and_plugs)
+ (modules test_adapters_and_plugs)
+ (libraries quartz quartz.edge quartz.lwt quartz.intl_uutf quartz.re quartz.std_adapters lwt logs))

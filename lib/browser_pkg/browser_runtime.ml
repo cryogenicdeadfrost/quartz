@@ -166,8 +166,55 @@ let client_runtime_js =
         if (typeof onMsg === 'function') onMsg(parsed, ev);
       };
       return es;
+    },
+    intl: {
+      formatDate: function(epochSec, opts) {
+        try { return new Intl.DateTimeFormat(undefined, opts || { dateStyle: 'medium' }).format(new Date(epochSec * 1000)); }
+        catch (_) { return new Date(epochSec * 1000).toISOString(); }
+      },
+      formatNumber: function(num, currency) {
+        try {
+          const opt = currency ? { style: 'currency', currency: currency } : {};
+          return new Intl.NumberFormat(undefined, opt).format(num);
+        } catch (_) { return String(num); }
+      },
+      pluralCategory: function(n, locale) {
+        try { return new Intl.PluralRules(locale || undefined).select(n); }
+        catch (_) { return n === 1 ? 'one' : 'other'; }
+      },
+      compare: function(a, b, locale) {
+        try { return new Intl.Collator(locale || undefined).compare(a, b); }
+        catch (_) { return a < b ? -1 : (a > b ? 1 : 0); }
+      }
     }
   };
+
+  // Chrome DevTools Custom Object Formatter reading `window.__QUARTZ_DEBUG_TYPES__`
+  if (typeof window !== 'undefined') {
+    window.devtoolsFormatters = window.devtoolsFormatters || [];
+    window.devtoolsFormatters.push({
+      header: function(obj) {
+        if (!obj || typeof obj !== 'object' || !obj.__quartzType) return null;
+        const meta = (window.__QUARTZ_DEBUG_TYPES__ || {})[obj.__quartzType];
+        const tagIdx = obj.value && typeof obj.value.tag === 'number' ? obj.value.tag : -1;
+        const label = meta && tagIdx >= 0 && meta.labels ? meta.labels[tagIdx] : obj.__quartzType;
+        return ['div', { style: 'color:#38bdf8;font-family:monospace' },
+          'Quartz<' + obj.__quartzType + '> :: ' + (label || JSON.stringify(obj.value))];
+      },
+      hasBody: function(obj) { return !!(obj && obj.__quartzType && obj.value); },
+      body: function(obj) {
+        const meta = (window.__QUARTZ_DEBUG_TYPES__ || {})[obj.__quartzType];
+        const fields = meta && meta.kind === 'record' && Array.isArray(meta.labels) ? meta.labels : null;
+        const rows = [];
+        if (fields && Array.isArray(obj.value)) {
+          fields.forEach(function(k, i) { rows.push(['div', {}, k + ': ' + JSON.stringify(obj.value[i])]); });
+        } else {
+          rows.push(['div', {}, JSON.stringify(obj.value, null, 2)]);
+        }
+        return ['div', { style: 'padding-left:12px;color:#e2e8f0;font-family:monospace' }].concat(rows);
+      }
+    });
+  }
 
   function hydrateIslands() {
     const nodes = document.querySelectorAll('[data-q-island]');
@@ -464,9 +511,120 @@ let client_runtime_js =
     });
   }
 
+  function hydratePlugs() {
+    document.querySelectorAll('[data-q-plug="1"]').forEach(function(el) {
+      if (el.__qPlugMounted) return;
+      el.__qPlugMounted = true;
+      const pkg = el.getAttribute('data-q-pkg');
+      const ver = el.getAttribute('data-q-ver') || 'latest';
+      const expName = el.getAttribute('data-q-export') || 'default';
+      const fw = el.getAttribute('data-q-framework') || 'vanilla';
+      const cdn = (el.getAttribute('data-q-cdn') || 'https://esm.sh').replace(/\/+$/, '');
+      const cssList = (el.getAttribute('data-q-css') || '').split(',').filter(Boolean);
+      cssList.forEach(function(href) {
+        if (!document.querySelector('link[href="' + href + '"]')) {
+          const l = document.createElement('link');
+          l.rel = 'stylesheet'; l.href = href;
+          document.head.appendChild(l);
+        }
+      });
+      let props = {};
+      try { props = JSON.parse(el.getAttribute('data-q-props') || '{}'); } catch (_) {}
+      const emit = function(payload) {
+        const hId = el.getAttribute('data-q-input') || el.getAttribute('data-q-change');
+        if (hId) sendEvent(hId, typeof payload === 'string' ? payload : JSON.stringify(payload), false);
+      };
+      const modUrl = (pkg.startsWith('http://') || pkg.startsWith('https://') || pkg.startsWith('/'))
+        ? pkg : (cdn + '/' + pkg + '@' + ver);
+      import(modUrl).then(async function(mod) {
+        const target = mod[expName] || mod.default || mod;
+        if (fw === 'react') {
+          const React = await import(cdn + '/react@18');
+          const ReactDOM = await import(cdn + '/react-dom@18/client');
+          const createRoot = ReactDOM.createRoot || (ReactDOM.default && ReactDOM.default.createRoot);
+          if (typeof createRoot === 'function') {
+            el.innerHTML = '';
+            createRoot(el).render((React.createElement || React.default.createElement)(target, Object.assign({}, props, { onQuartzEvent: emit })));
+          }
+        } else if (fw === 'webcomponent') {
+          Object.assign(el, props);
+        } else if (typeof target === 'function') {
+          el.innerHTML = '';
+          target(el, props, emit);
+        } else if (target && typeof target.mount === 'function') {
+          el.innerHTML = '';
+          target.mount(el, props, emit);
+        }
+      }).catch(function(err) {
+        console.warn('[Quartz Npm_plug] failed to load ' + modUrl, err);
+      });
+    });
+  }
+
+  function hydrateIntl() {
+    document.querySelectorAll('[data-q-intl-date]').forEach(function(el) {
+      if (el.__qIntlDone) return;
+      el.__qIntlDone = true;
+      const epoch = Number(el.getAttribute('data-q-intl-date') || '0');
+      const styleFmt = el.getAttribute('data-q-intl-style') || 'medium';
+      if (!Number.isNaN(epoch) && window.Quartz && window.Quartz.intl) {
+        el.textContent = window.Quartz.intl.formatDate(epoch, { dateStyle: styleFmt });
+      }
+    });
+    document.querySelectorAll('[data-q-intl-num]').forEach(function(el) {
+      if (el.__qIntlDone) return;
+      el.__qIntlDone = true;
+      const num = Number(el.getAttribute('data-q-intl-num') || '0');
+      const cur = el.getAttribute('data-q-intl-currency') || '';
+      if (!Number.isNaN(num) && window.Quartz && window.Quartz.intl) {
+        el.textContent = window.Quartz.intl.formatNumber(num, cur || null);
+      }
+    });
+  }
+
+  function hydrateHeadlessInteractions() {
+    document.querySelectorAll('[data-q-combobox]').forEach(function(wrap) {
+      if (wrap.__qComboBound) return;
+      wrap.__qComboBound = true;
+      const inp = wrap.querySelector('input');
+      const list = wrap.querySelector('[role="listbox"]');
+      if (!inp || !list) return;
+      inp.addEventListener('focus', function() { list.removeAttribute('hidden'); inp.setAttribute('aria-expanded', 'true'); });
+      inp.addEventListener('input', function() {
+        const q = (inp.value || '').toLowerCase();
+        list.removeAttribute('hidden');
+        list.querySelectorAll('[role="option"]').forEach(function(opt) {
+          opt.hidden = q !== '' && !opt.textContent.toLowerCase().includes(q);
+        });
+      });
+      list.addEventListener('click', function(e) {
+        const opt = e.target.closest('[role="option"]');
+        if (opt) {
+          inp.value = opt.textContent.trim();
+          list.querySelectorAll('[role="option"]').forEach(function(o) { o.setAttribute('aria-selected', o === opt ? 'true' : 'false'); });
+          list.setAttribute('hidden', '');
+          inp.setAttribute('aria-expanded', 'false');
+        }
+      });
+    });
+    document.querySelectorAll('[data-q-tooltip-wrap]').forEach(function(wrap) {
+      if (wrap.__qTipBound) return;
+      wrap.__qTipBound = true;
+      const tip = wrap.querySelector('[role="tooltip"]');
+      if (!tip) return;
+      wrap.addEventListener('mouseenter', function() { tip.setAttribute('aria-hidden', 'false'); });
+      wrap.addEventListener('mouseleave', function() { tip.setAttribute('aria-hidden', 'true'); });
+      wrap.addEventListener('focusin', function() { tip.setAttribute('aria-hidden', 'false'); });
+      wrap.addEventListener('focusout', function() { tip.setAttribute('aria-hidden', 'true'); });
+    });
+  }
+
   function hydrateAll() {
     hydrateIslands();
     hydrateExternalWidgets();
+    hydratePlugs();
+    hydrateIntl();
+    hydrateHeadlessInteractions();
     hydrateScene3d();
   }
 

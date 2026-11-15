@@ -91,4 +91,98 @@ export default {
 };
 |}
       compiled_wasm_or_js_module
+
+  (* Cloudflare Workers official module-worker entry (`env.ASSETS`, `env.MY_KV`, `env.DB` D1) *)
+  let cloudflare_worker_js ~compiled_wasm_or_js_module =
+    Printf.sprintf
+      {|import { handleFetchJson } from %S;
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (env && env.ASSETS && (url.pathname.startsWith('/assets/') || url.pathname === '/sitemap.xml' || url.pathname === '/robots.txt')) {
+      const assetRes = await env.ASSETS.fetch(request);
+      if (assetRes && assetRes.status !== 404) return assetRes;
+    }
+    const hdrs = {};
+    request.headers.forEach((v, k) => { hdrs[k] = v; });
+    const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
+    const out = JSON.parse(handleFetchJson(JSON.stringify({
+      method: request.method,
+      url: request.url,
+      headers: hdrs,
+      body
+    })));
+    return new Response(out.body, { status: out.status, headers: out.headers });
+  }
+};
+|}
+      compiled_wasm_or_js_module
+
+  (* Deno Deploy official `Deno.serve` entry *)
+  let deno_deploy_ts ~compiled_wasm_or_js_module =
+    Printf.sprintf
+      {|import { handleFetchJson } from %S;
+
+Deno.serve(async (request: Request): Promise<Response> => {
+  const hdrs: Record<string, string> = {};
+  request.headers.forEach((v, k) => { hdrs[k] = v; });
+  const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
+  const out = JSON.parse(handleFetchJson(JSON.stringify({
+    method: request.method,
+    url: request.url,
+    headers: hdrs,
+    body
+  })));
+  return new Response(out.body, { status: out.status, headers: out.headers });
+});
+|}
+      compiled_wasm_or_js_module
+
+  (* Bun official `Bun.serve` + built-in `bun:sqlite` session table starter *)
+  let bun_serve_ts ~compiled_wasm_or_js_module =
+    Printf.sprintf
+      {|import { Database } from "bun:sqlite";
+import { handleFetchJson } from %S;
+
+const db = new Database(process.env.QUARTZ_SQLITE || "quartz_sessions.db", { create: true });
+db.run("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, exp INTEGER)");
+
+export default {
+  port: Number(process.env.PORT || 3000),
+  async fetch(request: Request): Promise<Response> {
+    const hdrs: Record<string, string> = {};
+    request.headers.forEach((v, k) => { hdrs[k] = v; });
+    const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
+    const out = JSON.parse(handleFetchJson(JSON.stringify({
+      method: request.method,
+      url: request.url,
+      headers: hdrs,
+      body
+    })));
+    return new Response(out.body, { status: out.status, headers: out.headers });
+  }
+};
+|}
+      compiled_wasm_or_js_module
+
+  (* Netlify Edge Functions official context entry *)
+  let netlify_edge_js ~compiled_wasm_or_js_module =
+    Printf.sprintf
+      {|import { handleFetchJson } from %S;
+
+export default async function handler(request, context) {
+  const hdrs = {};
+  request.headers.forEach((v, k) => { hdrs[k] = v; });
+  const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
+  const out = JSON.parse(handleFetchJson(JSON.stringify({
+    method: request.method,
+    url: request.url,
+    headers: hdrs,
+    body
+  })));
+  return new Response(out.body, { status: out.status, headers: out.headers });
+}
+|}
+      compiled_wasm_or_js_module
 end

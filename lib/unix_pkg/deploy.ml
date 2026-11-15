@@ -93,7 +93,11 @@ jobs:
   write_file target yml;
   target
 
-let emit_vercel_output ?(out_dir = ".vercel/output") ?(mode = `Edge) ?(app_module = "./quartz_app.bc.js") () =
+let emit_vercel_output
+    ?(out_dir = ".vercel/output")
+    ?(mode : [ `Edge | `Nodejs | `Native ] = `Edge)
+    ?(app_module = "./quartz_app.bc.js")
+    () =
   let static_dir = Filename.concat out_dir "static" in
   let func_dir = Filename.concat out_dir "functions/index.func" in
   ensure_dir_p static_dir;
@@ -148,14 +152,48 @@ export default async function handler(request) {
      in
      write_file (Filename.concat func_dir ".vc-config.json") vc_cfg;
      write_file (Filename.concat func_dir "index.js") js_code
-   | `Native ->
+   | `Nodejs ->
      let vc_cfg =
        Json.to_pretty_string
          (Json.obj
             [
-              ("runtime", Json.string "provided.al2023");
-              ("handler", Json.string "bootstrap");
-              ("maxDuration", Json.int 10);
+              ("runtime", Json.string "nodejs22.x");
+              ("handler", Json.string "index.handler");
+              ("launcherType", Json.string "Nodejs");
+              ("shouldAddHelpers", Json.bool true);
+            ])
+     in
+     let node_code =
+       Printf.sprintf
+         {|const { handleFetchJson } = require(%S);
+
+exports.handler = async function(req, res) {
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  const out = JSON.parse(handleFetchJson(JSON.stringify({
+    method: req.method || 'GET',
+    url: req.url || '/',
+    headers: req.headers || {},
+    body
+  })));
+  res.statusCode = out.status;
+  for (const [k, v] of Object.entries(out.headers || {})) res.setHeader(k, v);
+  res.end(out.body);
+};
+|}
+         app_module
+     in
+     write_file (Filename.concat func_dir ".vc-config.json") vc_cfg;
+     write_file (Filename.concat func_dir "index.js") node_code
+   | `Native ->
+     (* Official Vercel Build Output API v3 custom bootstrap configuration *)
+     let vc_cfg =
+       Json.to_pretty_string
+         (Json.obj
+            [
+              ("runtime", Json.string "custom");
+              ("entrypoint", Json.string "bootstrap");
+              ("launcherType", Json.string "Lambda");
             ])
      in
      write_file (Filename.concat func_dir ".vc-config.json") vc_cfg);
@@ -171,6 +209,15 @@ compatibility_date = "2026-01-01"
 [assets]
 directory = "./dist_site"
 binding = "ASSETS"
+
+# Uncomment with your provisioned namespace / database IDs:
+# kv_namespaces = [
+#   { binding = "QUARTZ_KV", id = "replace-with-kv-id" }
+# ]
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "quartz-prod-db"
+# database_id = "replace-with-d1-id"
 |}
       name
   in
@@ -179,6 +226,11 @@ binding = "ASSETS"
 
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (env && env.ASSETS && (url.pathname.startsWith('/assets/') || url.pathname === '/sitemap.xml' || url.pathname === '/robots.txt')) {
+      const assetRes = await env.ASSETS.fetch(request);
+      if (assetRes && assetRes.status !== 404) return assetRes;
+    }
     const hdrs = {};
     request.headers.forEach((v, k) => { hdrs[k] = v; });
     const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
@@ -196,6 +248,171 @@ export default {
   write_file (Filename.concat out_dir "wrangler.toml") wrangler;
   write_file (Filename.concat out_dir "worker.js") worker_js;
   out_dir
+
+let emit_deno_deploy ?(out_dir = ".") ?(app_module = "./quartz_edge.bc.js") () =
+  let deno_json =
+    Json.to_pretty_string
+      (Json.obj
+         [
+           ("tasks", Json.obj [ ("start", Json.string "deno run --allow-net --allow-env main.ts") ]);
+         ])
+  in
+  let main_ts =
+    Printf.sprintf
+      {|import { handleFetchJson } from %S;
+
+Deno.serve(async (request: Request): Promise<Response> => {
+  const hdrs: Record<string, string> = {};
+  request.headers.forEach((v, k) => { hdrs[k] = v; });
+  const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
+  const out = JSON.parse(handleFetchJson(JSON.stringify({
+    method: request.method,
+    url: request.url,
+    headers: hdrs,
+    body
+  })));
+  return new Response(out.body, { status: out.status, headers: out.headers });
+});
+|}
+      app_module
+  in
+  write_file (Filename.concat out_dir "deno.json") deno_json;
+  write_file (Filename.concat out_dir "main.ts") main_ts;
+  out_dir
+
+let emit_bun_serve ?(out_dir = ".") ?(app_module = "./quartz_edge.bc.js") () =
+  let bunfig = "[serve.static]\nplugins = []\n" in
+  let server_ts =
+    Printf.sprintf
+      {|import { Database } from "bun:sqlite";
+import { handleFetchJson } from %S;
+
+const db = new Database(process.env.QUARTZ_SQLITE || "quartz_sessions.db", { create: true });
+db.run("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, exp INTEGER)");
+
+export default {
+  port: Number(process.env.PORT || 3000),
+  async fetch(request: Request): Promise<Response> {
+    const hdrs: Record<string, string> = {};
+    request.headers.forEach((v, k) => { hdrs[k] = v; });
+    const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
+    const out = JSON.parse(handleFetchJson(JSON.stringify({
+      method: request.method,
+      url: request.url,
+      headers: hdrs,
+      body
+    })));
+    return new Response(out.body, { status: out.status, headers: out.headers });
+  }
+};
+|}
+      app_module
+  in
+  write_file (Filename.concat out_dir "bunfig.toml") bunfig;
+  write_file (Filename.concat out_dir "server.ts") server_ts;
+  out_dir
+
+let emit_netlify_edge ?(out_dir = ".") ?(app_module = "../../quartz_edge.bc.js") () =
+  let netlify_toml =
+    {|[build]
+  command = "dune build && dune exec quartz -- build"
+  publish = "dist_site"
+
+[[edge_functions]]
+  function = "quartz"
+  path = "/*"
+|}
+  in
+  let fn_js =
+    Printf.sprintf
+      {|import { handleFetchJson } from %S;
+
+export default async function handler(request, context) {
+  const hdrs = {};
+  request.headers.forEach((v, k) => { hdrs[k] = v; });
+  const body = (request.method === 'GET' || request.method === 'HEAD') ? '' : await request.text();
+  const out = JSON.parse(handleFetchJson(JSON.stringify({
+    method: request.method,
+    url: request.url,
+    headers: hdrs,
+    body
+  })));
+  return new Response(out.body, { status: out.status, headers: out.headers });
+}
+|}
+      app_module
+  in
+  write_file (Filename.concat out_dir "netlify.toml") netlify_toml;
+  write_file (Filename.concat out_dir "netlify/edge-functions/quartz.js") fn_js;
+  out_dir
+
+let emit_aws_sam_lambda ?(out_dir = ".") ?(stack_name = "quartz-app") () =
+  let template =
+    Printf.sprintf
+      {|AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: %s -- Native OCaml Quartz Lambda (`provided.al2023`)
+
+Resources:
+  QuartzFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./lambda_dist/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [ x86_64 ]
+      MemorySize: 256
+      Timeout: 10
+      Events:
+        HttpProxy:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+|}
+      stack_name
+  in
+  write_file (Filename.concat out_dir "template.yaml") template;
+  out_dir
+
+let emit_railway_render_cloudrun ?(out_dir = ".") ?(app_name = "quartz-app") () =
+  let railway =
+    "[build]\nbuilder = \"DOCKERFILE\"\ndockerfilePath = \"Dockerfile\"\n\n[deploy]\nhealthcheckPath = \"/api/health\"\nrestartPolicyType = \"ON_FAILURE\"\n"
+  in
+  let render =
+    Printf.sprintf
+      {|services:
+  - type: web
+    name: %s
+    runtime: docker
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 8080
+|}
+      app_name
+  in
+  write_file (Filename.concat out_dir "railway.toml") railway;
+  write_file (Filename.concat out_dir "render.yaml") render;
+  out_dir
+
+let emit_caddy_https ?(out_dir = ".") ?(domain = "example.com") ?(upstream_port = 8080) () =
+  let caddyfile =
+    Printf.sprintf
+      {|# Automatic HTTP/2 + HTTP/3 + Let's Encrypt TLS termination for Quartz
+%s {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:%d {
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+}
+|}
+      domain upstream_port
+  in
+  let target = Filename.concat out_dir "Caddyfile" in
+  write_file target caddyfile;
+  target
 
 let emit_docker_and_fly ?(out_dir = ".") ?(app_name = "quartz-app") ?(binary_name = "quartz") () =
   let dockerfile =

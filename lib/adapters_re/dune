@@ -1,0 +1,6 @@
+(library
+ (name quartz_re)
+ (public_name quartz.re)
+ (optional)
+ (libraries quartz.core re)
+ (modules quartz_re))

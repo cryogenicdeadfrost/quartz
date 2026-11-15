@@ -222,3 +222,29 @@ module Async_storage_of_sync (S : SYNC_STORAGE) (M : IO) :
   let append_log ~topic entry = M.return (S.append_log ~topic entry)
   let read_log ~topic = M.return (S.read_log ~topic)
 end
+
+(* Plug & Ecosystem Adapter Interfaces -- external libraries (`re`, `uutf`,
+   `yojson`, Node/Bun/Deno npm workers, Chrome DevTools tables) satisfy these
+   signatures without introducing external dependencies into `quartz.core`. *)
+module type PLUG_TRANSPORT = sig
+  val invoke : pkg:string -> fn:string -> args_json:string -> (string, string) result
+end
+
+module type REGEX = sig
+  val matches : pattern:string -> string -> bool
+  val find_all : pattern:string -> string -> string list
+  val replace_all : pattern:string -> with_str:string -> string -> string
+end
+
+module type JSON_CODEC = sig
+  val validate : string -> (unit, string) result
+  val format_compact : string -> (string, string) result
+  val format_pretty : string -> (string, string) result
+end
+
+module type UNICODE = sig
+  val is_valid_utf8 : string -> bool
+  val char_count : string -> int
+  val casefold : string -> string
+  val slugify : string -> string
+end

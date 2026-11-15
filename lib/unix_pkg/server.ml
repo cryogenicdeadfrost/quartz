@@ -262,23 +262,48 @@ let run_browser
   in
   let started_at = Unix.gettimeofday () in
   let total_requests = ref 0 in
-  let inspector_handler (_r : Middleware.req) : Middleware.res =
+  let inspector_handler (r : Middleware.req) : Middleware.res =
     let isr_st = Isr.get_stats () in
-    let api_paths = Hashtbl.fold (fun k _ acc -> Json.string k :: acc) api_get_routes [] in
-    Middleware.ok
-      (Json.to_pretty_string
-         (Json.obj
-            [
-              ("engine", Json.string "quartz-v4");
-              ("uptimeSec", Json.float (Unix.gettimeofday () -. started_at));
-              ("requestsHandled", Json.int !total_requests);
-              ("registeredRoutes", Json.int (List.length effective_routes));
-              ("isrHits", Json.int isr_st.hits);
-              ("isrMisses", Json.int isr_st.misses);
-              ("apiGetEndpoints", Json.array api_paths);
-              ("recentEvents", Json.array (List.map (fun (ev : Pubsub.event) -> Json.obj [ ("id", Json.int ev.id); ("topic", Json.string ev.topic); ("payload", Json.string ev.payload) ]) (Pubsub.recent_events ())));
-              ("accessLogs", Json.array (List.map Json.string (Middleware.recent_access_logs ())));
-            ]))
+    let api_paths_str = Hashtbl.fold (fun k _ acc -> k :: acc) api_get_routes [] |> List.sort String.compare in
+    let api_paths = List.map Json.string api_paths_str in
+    let wants_html =
+      match Http.header_opt "accept" r.headers with
+      | Some a ->
+        let la = String.lowercase_ascii a in
+        let rec has s i =
+          i + 9 <= String.length s && (String.sub s i 9 = "text/html" || has s (i + 1))
+        in
+        has la 0
+      | None -> false
+    in
+    if wants_html then
+      Middleware.html
+        (Debug_registry.render_inspector_html
+           ~title
+           ~engine:"quartz-v4.2"
+           ~uptime_s:(Unix.gettimeofday () -. started_at)
+           ~requests_handled:!total_requests
+           ~routes:effective_routes
+           ~api_endpoints:api_paths_str
+           ~recent_events:(Pubsub.recent_events ())
+           ~access_logs:(Middleware.recent_access_logs ())
+           ~registered_plugs:(Npm_plug.list_registered_plugs ()))
+    else
+      Middleware.ok
+        (Json.to_pretty_string
+           (Json.obj
+              [
+                ("engine", Json.string "quartz-v4");
+                ("uptimeSec", Json.float (Unix.gettimeofday () -. started_at));
+                ("requestsHandled", Json.int !total_requests);
+                ("registeredRoutes", Json.int (List.length effective_routes));
+                ("isrHits", Json.int isr_st.hits);
+                ("isrMisses", Json.int isr_st.misses);
+                ("apiGetEndpoints", Json.array api_paths);
+                ("registeredPlugs", Json.array (List.map (fun (p, v) -> Json.string (p ^ "@" ^ v)) (Npm_plug.list_registered_plugs ())));
+                ("recentEvents", Json.array (List.map (fun (ev : Pubsub.event) -> Json.obj [ ("id", Json.int ev.id); ("topic", Json.string ev.topic); ("payload", Json.string ev.payload) ]) (Pubsub.recent_events ())));
+                ("accessLogs", Json.array (List.map Json.string (Middleware.recent_access_logs ())));
+              ]))
   in
   let send_streaming_ssr client_fd ~title ?meta ~shell deferred_slots =
     let hdr = Http.format_streaming_headers ~status:"200 OK" ~content_type:"text/html" () in

@@ -178,7 +178,30 @@ let rec to_ocaml ?(indent = 0) node : string =
   | HEl { tag = "img"; attrs; _ } ->
     let src = Option.value ~default:"/image.png" (List.assoc_opt "src" attrs) in
     let alt = Option.value ~default:"Image" (List.assoc_opt "alt" attrs) in
-    Printf.sprintf "%sDom.img ~src:%S ~alt:%S ()" pad src alt
+    let w = Option.bind (List.assoc_opt "width" attrs) int_of_string_opt |> Option.value ~default:320 in
+    let h = Option.bind (List.assoc_opt "height" attrs) int_of_string_opt |> Option.value ~default:180 in
+    Printf.sprintf "%sDom.img ~src:%S ~alt:%S ~width:%d ~height:%d ()" pad src alt w h
+  | HEl { tag = "dialog"; attrs; kids } ->
+    let did = Option.value ~default:"modal-dialog" (List.assoc_opt "id" attrs) in
+    let is_open = List.mem_assoc "open" attrs in
+    let kids_s =
+      if kids = [] then "[]"
+      else "[\n" ^ String.concat ";\n" (List.map (to_ocaml ~indent:(indent + 2)) kids) ^ "\n" ^ pad ^ "]"
+    in
+    Printf.sprintf "%sHeadless.dialog ~id:%S ~open_:%b %s" pad did is_open kids_s
+  | HEl { tag = "details"; attrs; kids } ->
+    let is_open = List.mem_assoc "open" attrs in
+    let sum_kids, body_kids =
+      match kids with
+      | HEl { tag = "summary"; kids = sk; _ } :: rest -> (sk, rest)
+      | rest -> ([ HText "Details" ], rest)
+    in
+    let sk_s = String.concat "; " (List.map (to_ocaml ~indent:0) sum_kids) in
+    let bk_s =
+      if body_kids = [] then "[]"
+      else "[\n" ^ String.concat ";\n" (List.map (to_ocaml ~indent:(indent + 2)) body_kids) ^ "\n" ^ pad ^ "]"
+    in
+    Printf.sprintf "%sHeadless.accordion_item ~open_:%b ~summary_kids:[ %s ] %s" pad is_open sk_s bk_s
   | HEl { tag; attrs; kids } ->
     let cls = Option.value ~default:"" (List.assoc_opt "class" attrs) in
     let styles =

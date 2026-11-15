@@ -1,0 +1,6 @@
+(library
+ (name quartz_intl_uutf)
+ (public_name quartz.intl_uutf)
+ (optional)
+ (libraries quartz.core uutf uucp)
+ (modules quartz_uutf))
