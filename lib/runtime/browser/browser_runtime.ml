@@ -133,9 +133,12 @@ let client_runtime_js =
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'id=' + encodeURIComponent(id) + '&val=' + encodeURIComponent(val || '')
       });
+      if (!res.ok) return false;
       await applyPayload(res, !!transition);
+      return true;
     } catch (e) {
       console.error('[Quartz LiveView]', e);
+      return false;
     }
   }
 
@@ -841,12 +844,16 @@ let client_runtime_js =
     dragTarget = null;
   });
 
-  document.addEventListener('click', function(e) {
+  document.addEventListener('click', async function(e) {
     const t = e.target.closest('[data-q-click]');
     if (t) {
       const isNav = t.tagName === 'A';
+      const href = isNav ? t.getAttribute('href') : null;
       if (isNav) e.preventDefault();
-      sendEvent(t.getAttribute('data-q-click'), '', isNav);
+      const handled = await sendEvent(t.getAttribute('data-q-click'), '', isNav);
+      if (!handled && isNav && href) {
+        window.location.assign(href);
+      }
     }
   });
 

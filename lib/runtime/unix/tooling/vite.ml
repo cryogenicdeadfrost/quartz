@@ -87,6 +87,7 @@ let run_vite_build
   in
   List.iter
     (fun (filename, route_path, node, dt) ->
+      Router.navigate route_path;
       let full_path = Filename.concat out_dir filename in
       let meta = Dom.{ (default_meta ~title ()) with canonical = Some (base_url ^ route_path) } in
       let pref = relative_prefix filename in

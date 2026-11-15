@@ -448,10 +448,10 @@ let run_browser
                               (p, fun (r : Middleware.req) -> Middleware.ok (fn (Http.parse_form_urlencoded r.body))) :: acc)
                             api_post_routes []
                         in
-                        if r_path_is_api_get req.path current_apis_g then
+                        if req.meth = "GET" && r_path_is_api_get req.path current_apis_g then
                           let wrapped = Middleware.pipeline !global_middlewares (List.assoc req.path current_apis_g) in
                           wrapped req
-                        else if r_path_is_api_post req.path current_apis_p then
+                        else if req.meth = "POST" && r_path_is_api_post req.path current_apis_p then
                           let wrapped = Middleware.pipeline !global_middlewares (List.assoc req.path current_apis_p) in
                           wrapped req
                         else
