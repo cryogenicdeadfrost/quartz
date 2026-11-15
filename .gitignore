@@ -1,7 +1,9 @@
 _build/
 *.install
-*.merlin
+.merlin
 .DS_Store
 dist_site/
+dist_starter_site/
+docs/
 *.swp
 *~
