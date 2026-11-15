@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.2.2 (2026-11-15) -- "SQL/DB Drivers, Reorganized Architecture, WebGPU Shaders & Starter Builders"
+* **Parameterized SQL & Multi-Backend Database Support:**
+  * Pure-OCaml `Quartz.Sql` (`lib/core/data/sql.ml`): Dialect compiler (`?` <-> `$1..$n` across SQLite, PostgreSQL, MySQL), schema/index DDL generator, embedded relational table engine, and transactional rollback.
+  * Multi-backend `Quartz.Db_driver` (`lib/runtime/unix/db/db_driver.ml`): Node 22 built-in `node:sqlite`, `better-sqlite3`, PostgreSQL (`pg`), Turso/LibSQL/Cloudflare D1 Hrana v2 HTTP pipeline protocol, Redis RESP2 TCP client, and crash-safe WAL persistence, plus idempotent schema migrations.
+* **Server, SSR, WebGPU & Edge Completeness:**
+  * Wired `~routes:app_routes` on `dev`/`serve`, per-session path scoping (`Router.with_path`), `?topic=` SSE filtering, and streaming SSR routes (`/__quartz_stream`, `?stream=1`) in `Server`.
+  * Implemented full WGSL vertex/fragment render pipeline, uniform buffers, and indexed 3D mesh drawing in `mountWebGpuScene` (`lib/runtime/browser/browser_runtime.ml`).
+  * Added standalone `quartz_edge.bc.js` generation across Edge/Cloudflare/Vercel/Deno/Bun/Netlify deploy emitters and `.nojekyll` + `404.html` SPA fallback in `Vite.run_vite_build`.
+* **Reorganized Repository Layout & Starter Builders:**
+  * Subdivided `lib/` cleanly into `lib/core/{reactivity,ui,web,data,bridge}`, `lib/runtime/{unix/{server,db,bridge,tooling},browser,edge,mirage,vercel}`, `lib/adapters/{lwt,re,uutf,std}`, and `lib/facade/`.
+  * Added out-of-the-box multi-page website (`examples/starter_website.ml`) and 6 Vite/Node-style project templates via `quartz templates` and `quartz create <template> <dir>`.
+  * Rewrote `README.md` and `VERSIONS_AND_ROADMAP.md`; moved internal working docs out of git via `.gitignore`.
+
 ## 4.2.0 (2026-11-15) -- "Complete Universal Platform & Hardening"
 * **Auth, Monadic IO, Regex & Locale Formatting (`quartz.core`):**
   * Pure-OCaml RFC 2898 / 6070 PBKDF2-HMAC-SHA256 (`Crypto_util.pbkdf2_sha256`, `hash_password`, `verify_password`, and `Io.PASSWORD_HASHER` / `Pbkdf2_hasher`).
