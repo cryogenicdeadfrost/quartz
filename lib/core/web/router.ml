@@ -39,8 +39,45 @@ let parse_query_str qs =
         | _ -> None)
       (String.split_on_char '&' qs)
 
+(* Deployment base path (for example "/my-repo" on GitHub Pages project sites).
+   Incoming URLs are stripped of this prefix before matching, and links built
+   with [href] / [link] get it prepended, so route patterns stay root-relative. *)
+let base_path_ref : string ref = ref ""
+
+let normalize_base (p : string) : string =
+  let t = String.trim p in
+  if t = "" || t = "/" then ""
+  else
+    let lead = if t.[0] = '/' then t else "/" ^ t in
+    let n = String.length lead in
+    if lead.[n - 1] = '/' then String.sub lead 0 (n - 1) else lead
+
+let set_base_path (p : string) : unit = base_path_ref := normalize_base p
+let base_path () : string = !base_path_ref
+
+let strip_base (url : string) : string =
+  let bp = !base_path_ref in
+  let lb = String.length bp in
+  if lb = 0 then url
+  else if url = bp then "/"
+  else if String.length url > lb && String.sub url 0 lb = bp then
+    match url.[lb] with
+    | '/' -> String.sub url lb (String.length url - lb)
+    | '?' -> "/" ^ String.sub url lb (String.length url - lb)
+    | _ -> url
+  else url
+
+let href (route_path : string) : string =
+  let clean =
+    if route_path = "" then "/"
+    else if route_path.[0] = '/' then route_path
+    else "/" ^ route_path
+  in
+  let bp = !base_path_ref in
+  if bp = "" then clean else if clean = "/" then bp ^ "/" else bp ^ clean
+
 let navigate raw_target =
-  let clean = if raw_target = "" then "/" else raw_target in
+  let clean = if raw_target = "" then "/" else strip_base raw_target in
   let path_part, qs_part =
     match String.split_on_char '?' clean with
     | [] -> ("/", "")
@@ -52,8 +89,15 @@ let navigate raw_target =
     Signal.set active_query (parse_query_str qs_part))
 
 let with_path raw_target (f : unit -> 'a) : 'a =
+  let prev_path = Signal.peek active_path in
+  let prev_query = Signal.peek active_query in
   navigate raw_target;
-  f ()
+  Fun.protect
+    ~finally:(fun () ->
+      Signal.batch (fun () ->
+        Signal.set active_path prev_path;
+        Signal.set active_query prev_query))
+    f
 
 let query_param key =
   List.assoc_opt key (Signal.get active_query)
@@ -199,7 +243,7 @@ let gadt_route ?title ?meta ?guard ?loader ?layout (path : ('fn, Dom.node) Path.
 
 let resolve ?(redirects = []) ?(not_found = default_404) (routes : route_def list) (raw_url : string) : resolution =
   let clean_path =
-    match String.split_on_char '?' raw_url with
+    match String.split_on_char '?' (strip_base raw_url) with
     | p :: _ when p <> "" -> p
     | _ -> "/"
   in
@@ -259,13 +303,13 @@ let link ~to_ ?(prefetch = true) ?(active_style = Style.[ color Palette.sky_400;
     let target_base =
       match String.split_on_char '?' to_ with hd :: _ -> hd | [] -> to_
     in
-    let is_active = cur = target_base in
+    let is_active = cur = strip_base target_base in
     let merged =
       Style.[ cursor_pointer; no_underline; transition_all ]
       @ style
       @ (if is_active then active_style else [])
     in
-    Dom.a ~href:to_ ~prefetch ~style:merged ~on_click:(fun () -> navigate to_) kids)
+    Dom.a ~href:(href to_) ~prefetch ~style:merged ~on_click:(fun () -> navigate to_) kids)
 
 (* Next.js-style Parallel & Intercepting @modal Slots *)
 let parallel_slot ~name (children : Dom.node list) : Dom.node =
@@ -320,7 +364,8 @@ let breadcrumbs () =
     Dom.div ~style:Style.[ flex_row; items_center; gap 8 ] (home :: build "" [] segs))
 
 let route_matches_any (routes : route_def list) target_url =
-  List.exists (fun r -> Option.is_some (match_pattern r.pattern target_url)) routes
+  let local = strip_base target_url in
+  List.exists (fun r -> Option.is_some (match_pattern r.pattern local)) routes
 
 let audit_routes (routes : route_def list) (sample_paths : string list) (app : unit -> Dom.node) =
   let broken_links = ref [] in

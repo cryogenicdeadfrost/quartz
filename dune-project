@@ -1,6 +1,6 @@
 (lang dune 2.9)
 (name quartz)
-(version 4.2.2)
+(version 4.3.0)
 
 (generate_opam_files true)
 

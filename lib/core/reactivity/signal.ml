@@ -117,6 +117,11 @@ let dispose_effect (obs : effect_handle) =
   cleanup_observer obs;
   obs.run <- (fun () -> ())
 
+let on_cleanup (fn : unit -> unit) =
+  match !active_obs with
+  | obs :: _ -> obs.cleanups <- fn :: obs.cleanups
+  | [] -> ()
+
 type 'a computed = 'a t
 
 let computed ?eq (fn : unit -> 'a) : 'a computed =
@@ -186,3 +191,60 @@ let redo h =
 
 let ( !~ ) = get
 let ( <~ ) = set
+
+let map (fn : 'a -> 'b) (s : 'a t) : 'b computed =
+  computed (fun () -> fn (get s))
+
+let filter (pred : 'a -> bool) (s : 'a list t) : 'a list computed =
+  computed (fun () -> List.filter pred (get s))
+
+let reduce (fn : 'acc -> 'a -> 'acc) (init : 'acc) (s : 'a list t) : 'acc computed =
+  computed (fun () -> List.fold_left fn init (get s))
+
+let group_by (key_fn : 'a -> 'k) (s : 'a list t) : ('k * 'a list) list computed =
+  computed (fun () ->
+    let tbl = Hashtbl.create 16 in
+    let order = ref [] in
+    List.iter
+      (fun x ->
+        let k = key_fn x in
+        match Hashtbl.find_opt tbl k with
+        | Some xs -> Hashtbl.replace tbl k (x :: xs)
+        | None ->
+          order := k :: !order;
+          Hashtbl.add tbl k [ x ])
+      (get s);
+    List.rev_map (fun k -> (k, List.rev (Hashtbl.find tbl k))) !order)
+
+let use_persisted ~key ~encode ~decode ~load ~save (default : 'a) : 'a t =
+  let initial =
+    match load key with
+    | Some raw -> (match decode raw with Some v -> v | None -> default)
+    | None -> default
+  in
+  let s = make initial in
+  ignore (watch (fun () -> save key (encode (get s))));
+  s
+
+module Context = struct
+  type 'a t = {
+    default : 'a;
+    mutable stack : 'a list;
+  }
+
+  let create default = { default; stack = [] }
+
+  let use ctx =
+    match ctx.stack with
+    | v :: _ -> v
+    | [] -> ctx.default
+
+  let provide ctx value fn =
+    ctx.stack <- value :: ctx.stack;
+    Fun.protect
+      ~finally:(fun () ->
+        match ctx.stack with
+        | _ :: rest -> ctx.stack <- rest
+        | [] -> ())
+      fn
+end

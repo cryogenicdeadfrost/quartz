@@ -728,12 +728,73 @@ let client_runtime_js =
     });
   }
 
+  function hydratePortals() {
+    document.querySelectorAll('[data-q-portal]').forEach(function(el) {
+      if (el.__qPortaled) return;
+      el.__qPortaled = true;
+      const targetSel = el.getAttribute('data-q-portal') || 'body';
+      const target = document.querySelector(targetSel) || document.body;
+      if (target && el.parentNode !== target) target.appendChild(el);
+    });
+  }
+
+  function hydrateLazy() {
+    const nodes = document.querySelectorAll('[data-q-lazy="1"]');
+    if (!nodes.length) return;
+    const reveal = function(el) {
+      if (el.__qLazyDone) return;
+      el.__qLazyDone = true;
+      const tpl = el.querySelector('template[data-q-lazy-tpl="1"]');
+      if (tpl) {
+        el.innerHTML = '';
+        el.appendChild(tpl.content.cloneNode(true));
+        hydrateAll();
+      }
+    };
+    if (typeof IntersectionObserver !== 'function') {
+      nodes.forEach(reveal);
+      return;
+    }
+    nodes.forEach(function(el) {
+      if (el.__qLazyBound) return;
+      el.__qLazyBound = true;
+      const margin = el.getAttribute('data-q-root-margin') || '150px';
+      const io = new IntersectionObserver(function(entries) {
+        entries.forEach(function(entry) {
+          if (entry.isIntersecting) {
+            io.disconnect();
+            reveal(el);
+          }
+        });
+      }, { rootMargin: margin });
+      io.observe(el);
+    });
+  }
+
+  window.__quartzDom = {
+    query: function(sel) { return document.querySelector(sel); },
+    queryAll: function(sel) { return Array.from(document.querySelectorAll(sel)); },
+    on: function(ev, fn) { document.addEventListener(ev, fn); return function() { document.removeEventListener(ev, fn); }; },
+    emit: function(ev, detail) { document.dispatchEvent(new CustomEvent(ev, { detail: detail })); },
+    storageGet: function(key, session) {
+      try { return (session ? window.sessionStorage : window.localStorage).getItem(key); } catch (_) { return null; }
+    },
+    storageSet: function(key, val, session) {
+      try { (session ? window.sessionStorage : window.localStorage).setItem(key, val); } catch (_) {}
+    },
+    storageRemove: function(key, session) {
+      try { (session ? window.sessionStorage : window.localStorage).removeItem(key); } catch (_) {}
+    }
+  };
+
   function hydrateAll() {
     hydrateIslands();
     hydrateExternalWidgets();
     hydratePlugs();
     hydrateIntl();
     hydrateHeadlessInteractions();
+    hydratePortals();
+    hydrateLazy();
     hydrateScene3d();
   }
 

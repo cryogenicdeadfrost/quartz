@@ -11,7 +11,9 @@
   cookie
   i18n
   signal
+  promise
   resource
+  es_std
   contrast
   style
   scene3d

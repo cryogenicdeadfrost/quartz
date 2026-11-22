@@ -7,13 +7,27 @@ type api_handler = (string * string) list -> string
 
 let api_get_routes : (string, api_handler) Hashtbl.t = Hashtbl.create 16
 let api_post_routes : (string, api_handler) Hashtbl.t = Hashtbl.create 16
+let api_router : Middleware.Api_router.router = Middleware.Api_router.create ()
 let global_middlewares : Middleware.t list ref = ref []
+let readiness_check : (unit -> (unit, string) result) ref = ref (fun () -> Ok ())
+let shutdown_hooks : (unit -> unit) list ref = ref []
+let shutdown_requested : bool ref = ref false
 
 let api_get path fn = Hashtbl.replace api_get_routes path fn
 let api_post path fn = Hashtbl.replace api_post_routes path fn
+let api_put ?middlewares path fn = Middleware.Api_router.put ?middlewares api_router path fn
+let api_patch ?middlewares path fn = Middleware.Api_router.patch ?middlewares api_router path fn
+let api_delete ?middlewares path fn = Middleware.Api_router.delete ?middlewares api_router path fn
+let api_options ?middlewares path fn = Middleware.Api_router.options ?middlewares api_router path fn
+let api_route ?middlewares ~meth path fn = Middleware.Api_router.add ?middlewares api_router ~meth ~pattern:path fn
+let mount_router ?middlewares ~prefix sub = Middleware.Api_router.mount ?middlewares ~prefix api_router sub
+let clear_api_router () = api_router.routes <- []; api_router.middlewares <- []
 let use_middleware (mw : Middleware.t) = global_middlewares := !global_middlewares @ [ mw ]
 let clear_middlewares () = global_middlewares := []
 let get_api_routes () = api_get_routes
+let set_readiness_check fn = readiness_check := fn
+let on_shutdown fn = shutdown_hooks := fn :: !shutdown_hooks
+let request_shutdown () = shutdown_requested := true
 
 let client_runtime_js = Quartz_browser.Browser_runtime.client_runtime_js
 let base_reset_css = App.base_reset_css
@@ -139,9 +153,16 @@ let serve_public_file ~public_dir req : Middleware.res option =
              | None -> Some (Middleware.reject ~status:"416 Range Not Satisfiable" "Bad byte range"))
           | None ->
             let out = if req.meth = "HEAD" then "" else content in
+            let is_hashed_asset =
+              String.length rel >= 7 && String.sub rel 0 7 = "assets/"
+            in
+            let cc =
+              if is_hashed_asset then "public, max-age=31536000, immutable"
+              else "public, max-age=3600"
+            in
             Some
               (Middleware.ok ~content_type:ct
-                 ~headers:[ ("Accept-Ranges", "bytes"); ("Cache-Control", "public, max-age=3600") ]
+                 ~headers:[ ("Accept-Ranges", "bytes"); ("Cache-Control", cc) ]
                  out)
         else None
 
@@ -236,10 +257,17 @@ let run_browser
     ?(workers = 8)
     ?routes
     ?(redirects = [])
+    ?(proxy = [])
     ?session_secret
     ?session_app
     ?max_requests
     (app : unit -> Dom.node) =
+  shutdown_requested := false;
+  if max_requests = None then (
+    let handle_sig _ = shutdown_requested := true in
+    (try Sys.set_signal Sys.sigint (Sys.Signal_handle handle_sig) with _ -> ());
+    (try Sys.set_signal Sys.sigterm (Sys.Signal_handle handle_sig) with _ -> ())
+  );
   let secret =
     match session_secret with
     | Some s -> s
@@ -448,14 +476,70 @@ let run_browser
                               (p, fun (r : Middleware.req) -> Middleware.ok (fn (Http.parse_form_urlencoded r.body))) :: acc)
                             api_post_routes []
                         in
-                        if req.meth = "GET" && r_path_is_api_get req.path current_apis_g then
-                          let wrapped = Middleware.pipeline !global_middlewares (List.assoc req.path current_apis_g) in
-                          wrapped req
-                        else if req.meth = "POST" && r_path_is_api_post req.path current_apis_p then
-                          let wrapped = Middleware.pipeline !global_middlewares (List.assoc req.path current_apis_p) in
-                          wrapped req
+                        let try_proxy () =
+                          List.find_map
+                            (fun (prefix, target_base) ->
+                              let lp = String.length prefix in
+                              if lp > 0 && String.length req.path >= lp && String.sub req.path 0 lp = prefix then
+                                let base_clean =
+                                  let lb = String.length target_base in
+                                  if lb > 0 && target_base.[lb - 1] = '/' then String.sub target_base 0 (lb - 1)
+                                  else target_base
+                                in
+                                let qs = Es_std.Search_params.to_string req.query in
+                                let full_url = base_clean ^ req.path ^ (if qs = "" then "" else "?" ^ qs) in
+                                let fwd_hdrs =
+                                  List.filter
+                                    (fun (k, _) ->
+                                      let lk = String.lowercase_ascii k in
+                                      lk <> "host" && lk <> "connection" && lk <> "content-length")
+                                    req.headers
+                                in
+                                match Fetch.request ~meth:req.meth ~headers:fwd_hdrs ~body:req.body full_url with
+                                | Ok r ->
+                                  let ct = Option.value ~default:"application/octet-stream" (List.assoc_opt "content-type" r.headers) in
+                                  let st = Printf.sprintf "%d %s" r.status (if r.status_text = "" then "OK" else r.status_text) in
+                                  Some (Middleware.status_res ~status:st ~content_type:ct r.body)
+                                | Error err ->
+                                  Some (Middleware.reject ~status:"502 Bad Gateway" ("Proxy error: " ^ err))
+                              else None)
+                            proxy
+                        in
+                        if req.meth = "GET" && req.path = "/healthz" then
+                          Middleware.json_res (Json.obj [ ("ok", Json.bool true); ("status", Json.string "alive") ])
+                        else if req.meth = "GET" && req.path = "/readyz" then
+                          (match !readiness_check () with
+                           | Ok () -> Middleware.json_res (Json.obj [ ("ok", Json.bool true); ("status", Json.string "ready") ])
+                           | Error reason ->
+                             Middleware.json_res ~status:"503 Service Unavailable"
+                               (Json.obj [ ("ok", Json.bool false); ("error", Json.string reason) ]))
                         else
-                          App_impl.handle app_instance req)
+                          match try_proxy () with
+                          | Some proxied -> proxied
+                          | None ->
+                            if req.meth = "GET" && r_path_is_api_get req.path current_apis_g then
+                              let wrapped = Middleware.pipeline !global_middlewares (List.assoc req.path current_apis_g) in
+                              wrapped req
+                            else if req.meth = "POST" && r_path_is_api_post req.path current_apis_p then
+                              let wrapped = Middleware.pipeline !global_middlewares (List.assoc req.path current_apis_p) in
+                              wrapped req
+                            else
+                              match Middleware.Api_router.dispatch_opt api_router req with
+                              | Some res ->
+                                let wrapped = Middleware.pipeline !global_middlewares (fun _ -> res) in
+                                wrapped req
+                              | None ->
+                                if req.meth = "OPTIONS" then
+                                  Middleware.status_res ~status:"204 No Content"
+                                    ~headers:
+                                      [
+                                        ("Access-Control-Allow-Origin", "*");
+                                        ("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+                                        ("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token");
+                                      ]
+                                    ""
+                                else
+                                  App_impl.handle app_instance req)
                 in
                 let ka = Http.should_keep_alive parsed && max_requests = None in
                 let wire =
@@ -471,13 +555,26 @@ let run_browser
               )
         done)
   in
-  while keep_accepting () do
-    let client_fd, peer_addr = Unix.accept sock in
-    incr accepted;
-    if max_requests <> None then
-      handle_client client_fd peer_addr
-    else
-      Unix_adapters.Worker_pool.submit pool (fun () -> handle_client client_fd peer_addr)
+  while keep_accepting () && not !shutdown_requested do
+    let ready =
+      if max_requests <> None then true
+      else
+        try
+          let r, _, _ = Unix.select [ sock ] [] [] 0.25 in
+          r <> []
+        with Unix.Unix_error (Unix.EINTR, _, _) -> false
+    in
+    if ready then (
+      try
+        let client_fd, peer_addr = Unix.accept sock in
+        incr accepted;
+        if max_requests <> None then
+          handle_client client_fd peer_addr
+        else
+          Unix_adapters.Worker_pool.submit pool (fun () -> handle_client client_fd peer_addr)
+      with Unix.Unix_error (Unix.EINTR, _, _) -> ()
+    )
   done;
   Unix_adapters.Worker_pool.shutdown pool;
+  List.iter (fun fn -> try fn () with _ -> ()) !shutdown_hooks;
   (try Unix.close sock with _ -> ())

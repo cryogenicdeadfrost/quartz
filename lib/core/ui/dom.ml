@@ -69,6 +69,177 @@ let show ~when_ ?(fallback = fun () -> Empty) render =
 let each ~items ~key:_ render_item =
   Dynamic (fun () -> Fragment (List.mapi (fun i x -> render_item x i) (items ())))
 
+let for_each ~key ~(items : unit -> 'a list) (render_item : 'a -> node) : node =
+  Dynamic
+    (fun () ->
+      Fragment
+        (List.map
+           (fun x ->
+             let k = key x in
+             match render_item x with
+             | El e -> El { e with attrs = Attr ("data-q-key", k) :: e.attrs }
+             | other ->
+               El { tag = "div"; id = None; cls = None; style = []; attrs = [ Attr ("data-q-key", k) ]; kids = [ other ] })
+           (items ())))
+
+let error_boundary ~(fallback : string -> node) (render : unit -> node) : node =
+  Dynamic
+    (fun () ->
+      try render ()
+      with exn -> fallback (Printexc.to_string exn))
+
+let portal ?(target = "body") kids =
+  El { tag = "div"; id = None; cls = None; style = []; attrs = [ Attr ("data-q-portal", target) ]; kids }
+
+let lazy_load ?(root_margin = "150px") ~(fallback : unit -> node) (render : unit -> node) : node =
+  let tpl = El { tag = "template"; id = None; cls = None; style = []; attrs = [ Attr ("data-q-lazy-tpl", "1") ]; kids = [ Dynamic render ] } in
+  El
+    {
+      tag = "div";
+      id = None;
+      cls = None;
+      style = [];
+      attrs = [ Attr ("data-q-lazy", "1"); Attr ("data-q-root-margin", root_margin) ];
+      kids = [ fallback (); tpl ];
+    }
+
+type dom_ref = {
+  ref_id : string;
+  mutable current : node option;
+}
+
+let ref_seq = ref 0
+
+let use_ref ?id () : dom_ref =
+  let rid =
+    match id with
+    | Some s -> s
+    | None ->
+      incr ref_seq;
+      Printf.sprintf "qref-%d" !ref_seq
+  in
+  { ref_id = rid; current = None }
+
+let attach_ref (r : dom_ref) (n : node) : node =
+  let bound =
+    match n with
+    | El e ->
+      let id = match e.id with Some _ -> e.id | None -> Some r.ref_id in
+      El { e with id; attrs = Attr ("data-q-ref", r.ref_id) :: e.attrs }
+    | other -> other
+  in
+  r.current <- Some bound;
+  bound
+
+let split_ws s =
+  String.split_on_char ' ' (String.trim s) |> List.filter (fun x -> x <> "")
+
+let attr_val key attrs =
+  List.find_map
+    (function
+      | Attr (k, v) when k = key -> Some v
+      | Bool_attr (k, true) when k = key -> Some ""
+      | _ -> None)
+    attrs
+
+let match_simple_selector (sel : string) (n : node) : bool =
+  match n with
+  | El { tag; id; cls; attrs; _ } ->
+    let s = String.trim sel in
+    if s = "" || s = "*" then true
+    else if s.[0] = '#' then
+      let want = String.sub s 1 (String.length s - 1) in
+      id = Some want
+    else if s.[0] = '.' then
+      let want = String.sub s 1 (String.length s - 1) in
+      (match cls with Some c -> List.mem want (split_ws c) | None -> false)
+    else if s.[0] = '[' && s.[String.length s - 1] = ']' then
+      let inner = String.sub s 1 (String.length s - 2) in
+      (match String.index_opt inner '=' with
+       | None -> Option.is_some (attr_val inner attrs)
+       | Some i ->
+         let k = String.trim (String.sub inner 0 i) in
+         let raw_v = String.trim (String.sub inner (i + 1) (String.length inner - i - 1)) in
+         let v =
+           let lv = String.length raw_v in
+           if lv >= 2 && ((raw_v.[0] = '"' && raw_v.[lv - 1] = '"') || (raw_v.[0] = '\'' && raw_v.[lv - 1] = '\'')) then
+             String.sub raw_v 1 (lv - 2)
+           else raw_v
+         in
+         attr_val k attrs = Some v)
+    else
+      (match String.index_opt s '.' with
+       | Some i ->
+         let want_tag = String.sub s 0 i in
+         let want_cls = String.sub s (i + 1) (String.length s - i - 1) in
+         tag = want_tag
+         && (match cls with Some c -> List.mem want_cls (split_ws c) | None -> false)
+       | None ->
+         match String.index_opt s '#' with
+         | Some i ->
+           let want_tag = String.sub s 0 i in
+           let want_id = String.sub s (i + 1) (String.length s - i - 1) in
+           tag = want_tag && id = Some want_id
+         | None -> tag = s)
+  | _ -> false
+
+let query_selector_all (selector : string) (root : node) : node list =
+  let parts = split_ws selector in
+  let rec collect_for_step step n acc =
+    match n with
+    | Dynamic fn -> collect_for_step step (fn ()) acc
+    | Fragment kids -> List.fold_left (fun a k -> collect_for_step step k a) acc kids
+    | El { kids; _ } as el_node ->
+      let acc' = if match_simple_selector step el_node then el_node :: acc else acc in
+      List.fold_left (fun a k -> collect_for_step step k a) acc' kids
+    | _ -> acc
+  in
+  let rec eval steps roots =
+    match steps with
+    | [] -> roots
+    | [ last ] ->
+      List.concat_map (fun r -> List.rev (collect_for_step last r [])) roots
+    | step :: rest ->
+      let matched = List.concat_map (fun r -> List.rev (collect_for_step step r [])) roots in
+      let next_roots =
+        List.concat_map
+          (function
+            | El { kids; _ } -> kids
+            | Fragment kids -> kids
+            | _ -> [])
+          matched
+      in
+      eval rest next_roots
+  in
+  eval parts [ root ]
+
+let query_selector (selector : string) (root : node) : node option =
+  match query_selector_all selector root with
+  | x :: _ -> Some x
+  | [] -> None
+
+let dom_event_listeners : (string, (int * (string -> unit)) list) Hashtbl.t = Hashtbl.create 16
+let next_dom_listener_id = ref 1
+
+let add_event_listener ~(event : string) (fn : string -> unit) : int =
+  let id = !next_dom_listener_id in
+  incr next_dom_listener_id;
+  let cur = Option.value ~default:[] (Hashtbl.find_opt dom_event_listeners event) in
+  Hashtbl.replace dom_event_listeners event (cur @ [ (id, fn) ]);
+  id
+
+let remove_event_listener ~(event : string) (id : int) : unit =
+  match Hashtbl.find_opt dom_event_listeners event with
+  | None -> ()
+  | Some ls -> Hashtbl.replace dom_event_listeners event (List.filter (fun (lid, _) -> lid <> id) ls)
+
+let dispatch_event ~(event : string) ?(detail = "") () : int =
+  match Hashtbl.find_opt dom_event_listeners event with
+  | None -> 0
+  | Some ls ->
+    List.iter (fun (_, fn) -> fn detail) ls;
+    List.length ls
+
 let el tag ?id ?class_ ?(style = []) ?(attrs = []) kids =
   El { tag; id; cls = class_; style; attrs; kids }
 

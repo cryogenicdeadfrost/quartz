@@ -1,6 +1,6 @@
 (tests
- (names test_quartz test_quartz_v4)
- (modules test_quartz test_quartz_v4)
+ (names test_quartz test_quartz_v4 test_v43)
+ (modules test_quartz test_quartz_v4 test_v43)
  (libraries quartz quartz.edge quartz.mirage quartz.vercel))
 
 (test

@@ -32,18 +32,19 @@ quartz/
 │   └── starter_website.ml             # Complete out-of-the-box multi-page website + SQLite changelog
 ├── lib/
 │   ├── core/                          # Pure OCaml core (`quartz.core` — zero Unix/C deps)
-│   │   ├── reactivity/                # signal.ml, resource.ml, debug_registry.ml
-│   │   ├── ui/                        # dom.ml, style.ml, contrast.ml, headless.ml, components.ml, charts.ml, scene3d.ml, tui.ml
-│   │   ├── web/                       # http.ml, router.ml, form.ml, middleware.ml, cookie.ml, multipart.ml, websocket.ml, pubsub.ml, isr.ml, app.ml
-│   │   ├── data/                      # io.ml, json.ml, crypto_util.ml, i18n.ml, store.ml, sql.ml, jobs.ml
+│   │   ├── reactivity/                # signal.ml (Context, on_cleanup), promise.ml (Abort, Timers, Scope), resource.ml, debug_registry.ml
+│   │   ├── ui/                        # dom.ml (portal, error_boundary, lazy_load, query_selector), style.ml, contrast.ml, headless.ml, components.ml, charts.ml, scene3d.ml, tui.ml
+│   │   ├── web/                       # http.ml, router.ml (base_path), form.ml, middleware.ml (Api_router, error_handler), cookie.ml, multipart.ml, websocket.ml, pubsub.ml, isr.ml, app.ml
+│   │   ├── data/                      # io.ml, json.ml, es_std.ml (Url, Iter, Set_ops, Temporal, Emitter, Path), crypto_util.ml, i18n.ml, store.ml, sql.ml, jobs.ml
 │   │   └── bridge/                    # npm_plug.ml
 │   ├── runtime/                       # Target-specific execution engines
 │   │   ├── unix/                      # `quartz.unix`
-│   │   │   ├── server/                # server.ml, unix_adapters.ml
+│   │   │   ├── server/                # server.ml (full REST verbs, /healthz, /readyz, dev proxy, graceful shutdown), unix_adapters.ml
+│   │   │   ├── net/                   # fetch.ml (HTTP/HTTPS outbound client + AbortController)
 │   │   │   ├── db/                    # db_driver.ml (SQLite, Postgres, LibSQL/Turso, Redis RESP2, Embedded WAL)
 │   │   │   ├── bridge/                # npm_server_plug.ml, import_dts.ml, import_html.ml
-│   │   │   └── tooling/               # vite.ml, deploy.ml, scaffolder.ml
-│   │   ├── browser/                   # browser_runtime.ml (keyed DOM patcher, WebGL2/WebGPU, WAI-ARIA, ESM loader)
+│   │   │   └── tooling/               # vite.ml (CSS/JS minifier, Asset_manifest, 6-stage check, HMR), env.ml (.env loader), deploy.ml, scaffolder.ml
+│   │   ├── browser/                   # browser_runtime.ml (keyed DOM patcher, portals, lazy IntersectionObserver, WebGL2/WebGPU, WAI-ARIA, esm.sh)
 │   │   ├── edge/                      # edge_adapter.ml (Cloudflare Workers / WinterCG)
 │   │   ├── mirage/                    # mirage_adapter.ml (MirageOS 4 unikernel functor)
 │   │   └── vercel/                    # vercel_runtime.ml (Vercel Build Output v3)
@@ -135,6 +136,28 @@ let routes = [
 
 let () =
   run_browser ~port:8080 ~title:"Control Plane" ~routes (fun () -> Router.router routes)
+```
+
+### ES2025/2026 Reactive & Async Primitives + Express-Style APIs (`v4.3.0`)
+
+Quartz ships the everyday JavaScript/React/Solid/Express ergonomics natively in OCaml so you don't miss them when moving off Node:
+
+- **Async & Cancellation:** Deferred `Promise` (`with_resolvers`, `try_`, `all`, `race`, `any`, `all_settled`, `let*`/`let+`), `Abort` (`AbortController`, `Abort.timeout`, `Abort.any`), `Timers` (`set_timeout`, `set_interval`, `debounce`, `throttle`, `queue_microtask`), and `Scope.with_scope` (LIFO resource cleanup).
+- **UI & State Tools:** `Signal.map`/`filter`/`reduce`/`group_by`, `on_cleanup`, `use_persisted`, React-style `Context` (`create_context`/`provide_context`/`use_context`), `for_each`, `error_boundary`, `portal`, `lazy_load` (`IntersectionObserver`), `use_ref`, `query_selector`/`query_selector_all`, and custom DOM events.
+- **ES2025/2026 & Node Utilities:** `Url` + `Search_params`, lazy `Iter` (`Seq`) pipelines, `Set_ops`, `Regex_util.escape`, `Temporal` (`Duration`/`Instant`/`Plain_date`), `Emitter`, `Path`, and `.env` loading via `Env` (with `PUBLIC_` / `VITE_` client-safe filtering).
+- **Express/Vite Server & Build:** `api_put`/`api_patch`/`api_delete`/`api_options`, mounted `Api_router` sub-routers with `:param` matching, `Middleware.error_handler`, `/healthz` + `/readyz` probes, `SIGTERM`/`SIGINT` graceful shutdown, outbound `Fetch`, dev `~proxy`, CSS/JS minification, and content-hashed `Vite.Asset_manifest`.
+
+```ocaml
+open Quartz
+
+let api_v1 = Api_router.create ()
+let () =
+  Api_router.use api_v1 (Middleware.error_handler ());
+  Api_router.get api_v1 "/users/:id" (fun params _req ->
+    let id = Option.value ~default:"" (List.assoc_opt "id" params) in
+    Middleware.json_res (Json.obj [ ("id", Json.string id) ]));
+  mount_router ~prefix:"/api/v1" api_v1;
+  run_browser ~port:8080 ~proxy:[ ("/upstream", "http://127.0.0.1:4000") ] (fun () -> div [ text "Ready" ])
 ```
 
 ### Parameterized SQL & Multi-Backend Database Driver

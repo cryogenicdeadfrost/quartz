@@ -1,6 +1,6 @@
 # Quartz -- Version Tracker & Subsystem Roadmap
 
-This file tracks shipped releases of **Quartz**, the reorganized module layout under `lib/`, and the pure-OCaml + ecosystem-bridge architecture across v1.0 through v4.2.2.
+This file tracks shipped releases of **Quartz**, the reorganized module layout under `lib/`, and the pure-OCaml + ecosystem-bridge architecture across v1.0 through v4.3.0.
 
 ---
 
@@ -49,6 +49,13 @@ lib/
 * **`v4.2.2` (Database Drivers, Reorganized Codebase, WebGPU Shaders & Starter Builders):**
   * **Parameterized SQL & Multi-Backend DB Drivers:** Pure-OCaml `Quartz.Sql` dialect compiler (`?` <-> `$1..$n`, DDL generator, embedded relational + transaction engine) and `Quartz.Db_driver` supporting Node 22 `node:sqlite`, `better-sqlite3`, PostgreSQL (`pg`), Turso/LibSQL/D1 Hrana v2 HTTP pipelines, Redis RESP2 sockets, and crash-safe WAL persistence.
   * **Complete Starter Experience:** Out-of-the-box multi-page website (`examples/starter_website.ml`), 6 Vite/Node-style project templates via `quartz templates` and `quartz create <template> <dir>` (`minimal`, `fullstack-saas`, `static-blog`, `realtime-collab`, `webgl-3d`, `js-hybrid`), standalone `quartz_edge.bc.js` edge bundle generation, `.nojekyll` + `404.html` GitHub Pages routing, and full WGSL vertex/fragment mesh pipeline for `Scene3d` WebGPU canvases.
+* **`v4.2.3` (Multi-Page Static Routing & Method Dispatch Fixes):**
+  * Fixed `Vite.run_vite_build` pass 2 to call `Router.navigate route_path` before exporting each static page, added static `href` fallback for `<a data-q-click>` in `browser_runtime.ml`, and enforced strict HTTP method matching on API dispatch in `server.ml`.
+* **`v4.3.0` (ES2025/2026 Reactive & Web Primitives + Express/Node/Vite Runtime):**
+  * **Async, Cancellation & Scoping (`promise.ml`):** Deferred `Promise` (`with_resolvers`, `try_`, `all`, `race`, `any`, `all_settled`, `let*`/`let+`), `Abort` (`AbortController`, `Abort.timeout`, `Abort.any`), `Timers` (`set_timeout`, `set_interval`, `debounce`, `throttle`, `queue_microtask`), and LIFO `Scope` (`with_scope`).
+  * **Reactive UI & DOM Tools (`signal.ml`, `dom.ml`, `browser_runtime.ml`):** `Signal.on_cleanup`, `Signal.map`/`filter`/`reduce`/`group_by`, `use_persisted`, React-style `Context`, keyed `for_each`, `error_boundary`, `portal`, `lazy_load` (`IntersectionObserver`), `use_ref`/`attach_ref`, `query_selector`/`query_selector_all`, and custom DOM event bus.
+  * **ES2025/2026 & Node Standard Utilities (`es_std.ml`, `env.ml`):** `Url` + `Search_params`, lazy `Iter` pipelines, `Set_ops`, `Regex_util.escape`, `Temporal` (`Duration`/`Instant`/`Plain_date`), `Emitter`, cross-platform `Path`, and `.env` config loader (`Env`) with `PUBLIC_`/`VITE_` separation.
+  * **Express/Vite Networking & Bundling (`router.ml`, `middleware.ml`, `fetch.ml`, `server.ml`, `vite.ml`):** Native `Router.set_base_path` + `with_path` restoration, `Api_router` sub-routers (`GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`OPTIONS`, `:param` matching, scoped middleware), `Middleware.error_handler`, `/healthz` + `/readyz` probes, `SIGTERM`/`SIGINT` graceful shutdown, outbound `Fetch`, dev `~proxy`, `Cache-Control: immutable` on `/assets/`, pure-OCaml CSS/JS minifier, and content-hashed `Vite.Asset_manifest`.
 
 ---
 

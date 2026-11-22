@@ -31,17 +31,98 @@ let rec copy_dir_recursive ~src ~dst =
       (Sys.readdir src)
   )
 
+let minify_css (src : string) : string =
+  let n = String.length src in
+  let b = Buffer.create n in
+  let i = ref 0 in
+  let prev_ws = ref false in
+  while !i < n do
+    let c = src.[!i] in
+    if c = '/' && !i + 1 < n && src.[!i + 1] = '*' then (
+      i := !i + 2;
+      while !i + 1 < n && not (src.[!i] = '*' && src.[!i + 1] = '/') do incr i done;
+      i := !i + 2
+    ) else if c = ' ' || c = '\n' || c = '\r' || c = '\t' then (
+      if not !prev_ws then (
+        Buffer.add_char b ' ';
+        prev_ws := true
+      );
+      incr i
+    ) else (
+      Buffer.add_char b c;
+      prev_ws := false;
+      incr i
+    )
+  done;
+  String.trim (Buffer.contents b)
+
+let minify_js (src : string) : string =
+  String.split_on_char '\n' src
+  |> List.filter_map (fun raw ->
+       let t = String.trim raw in
+       if t = "" then None
+       else if String.length t >= 2 && t.[0] = '/' && t.[1] = '/' then None
+       else Some t)
+  |> String.concat "\n"
+
+module Asset_manifest = struct
+  type t = (string, string) Hashtbl.t
+
+  let fingerprint_public_dir ~public_dir ~out_dir : t =
+    let tbl = Hashtbl.create 16 in
+    let rec walk rel_dir =
+      let abs_dir = if rel_dir = "" then public_dir else Filename.concat public_dir rel_dir in
+      if Sys.file_exists abs_dir && Sys.is_directory abs_dir then
+        Array.iter
+          (fun entry ->
+            let rel = if rel_dir = "" then entry else rel_dir ^ "/" ^ entry in
+            let sp = Filename.concat abs_dir entry in
+            if Sys.is_directory sp then walk rel
+            else
+              let ext = String.lowercase_ascii (Filename.extension entry) in
+              if ext = ".css" || ext = ".js" || ext = ".svg" || ext = ".png" || ext = ".webp" || ext = ".woff2" then (
+                let ic = open_in_bin sp in
+                let raw =
+                  Fun.protect ~finally:(fun () -> close_in_noerr ic)
+                    (fun () -> really_input_string ic (in_channel_length ic))
+                in
+                let h = String.sub (Crypto_util.sha256_hex raw) 0 8 in
+                let stem = Filename.remove_extension entry in
+                let hashed_rel = Printf.sprintf "assets/%s.%s%s" stem h ext in
+                write_text_file (Filename.concat out_dir hashed_rel) raw;
+                Hashtbl.replace tbl rel hashed_rel
+              ))
+          (Sys.readdir abs_dir)
+    in
+    walk "";
+    tbl
+
+  let resolve (m : t) (orig : string) : string =
+    let key =
+      if String.length orig > 0 && orig.[0] = '/' then String.sub orig 1 (String.length orig - 1)
+      else orig
+    in
+    Option.value ~default:orig (Hashtbl.find_opt m key)
+
+  let to_json (m : t) : Json.t =
+    let pairs =
+      Hashtbl.fold (fun k v acc -> (k, Json.string v) :: acc) m []
+      |> List.sort (fun (a, _) (b, _) -> String.compare a b)
+    in
+    Json.obj pairs
+end
+
 let run_vite_build
     ~out_dir
     ?(base_url = "https://quartz.ocaml.org")
     ?(title = "Quartz App")
     ?(public_dir = "public")
+    ?(minify = true)
     (pages : (string * string * (unit -> Dom.node)) list) =
   let t0 = Unix.gettimeofday () in
   Deploy.ensure_dir_p out_dir;
   let assets_dir = Filename.concat out_dir "assets" in
   Deploy.ensure_dir_p assets_dir;
-  (* Clean any previous content-hashed runtime or stylesheet files to prevent stale buildup *)
   if Sys.file_exists assets_dir && Sys.is_directory assets_dir then
     Array.iter
       (fun entry ->
@@ -49,17 +130,17 @@ let run_vite_build
            || (String.length entry > 7 && String.sub entry 0 7 = "styles.") then
           (try Sys.remove (Filename.concat assets_dir entry) with _ -> ()))
       (Sys.readdir assets_dir);
-  Printf.printf "\n  [quartz v4.0] building static production bundle + hashed runtime for %s...\n" title;
+  Printf.printf "\n  [quartz v4.3] building static production bundle + hashed runtime for %s...\n" title;
 
-  (* Emit shared browser runtime chunk (content-hashed!) so islands share ONE chunk *)
-  let runtime_js = Quartz_browser.Browser_runtime.client_runtime_js in
+  let raw_runtime_js = Quartz_browser.Browser_runtime.client_runtime_js in
+  let runtime_js = if minify then minify_js raw_runtime_js else raw_runtime_js in
   let rt_hash = String.sub (Crypto_util.sha256_hex runtime_js) 0 8 in
   let rt_rel = Printf.sprintf "assets/quartz-runtime.%s.js" rt_hash in
   write_text_file (Filename.concat out_dir rt_rel) runtime_js;
 
-  (* Copy /public/* if present *)
   if Sys.file_exists public_dir && Sys.is_directory public_dir then
     copy_dir_recursive ~src:public_dir ~dst:out_dir;
+  let asset_manifest = Asset_manifest.fingerprint_public_dir ~public_dir ~out_dir in
 
   let total_bytes = ref 0 in
   let manifest_entries = ref [] in
@@ -76,7 +157,8 @@ let run_vite_build
         (filename, route_path, node, dt))
       pages
   in
-  let deduped_css = String.concat "\n" (Style.deduplicate_css !all_css_rules) in
+  let raw_css = String.concat "\n" (Style.deduplicate_css !all_css_rules) in
+  let deduped_css = if minify then minify_css raw_css else raw_css in
   let base_css_hash = String.sub (Crypto_util.sha256_hex deduped_css) 0 8 in
   let base_css_rel = Printf.sprintf "assets/styles.%s.css" base_css_hash in
   write_text_file (Filename.concat out_dir base_css_rel) deduped_css;
@@ -132,9 +214,10 @@ let run_vite_build
     (Json.to_pretty_string
        (Json.obj
           [
-            ("engine", Json.string "quartz-v4");
+            ("engine", Json.string "quartz-v4.3");
             ("runtimeAsset", Json.string rt_rel);
             ("baseCssAsset", Json.string base_css_rel);
+            ("assetMap", Asset_manifest.to_json asset_manifest);
             ("pages", Json.array (List.rev !manifest_entries));
           ]));
   let llms_routes =

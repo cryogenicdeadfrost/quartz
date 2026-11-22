@@ -7,6 +7,8 @@
  (modules
   unix_adapters
   db_driver
+  env
+  fetch
   server
   deploy
   scaffolder

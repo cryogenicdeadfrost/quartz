@@ -273,3 +273,135 @@ module Endpoint = struct
     in
     "export const quartzRpc = {\n" ^ String.concat ",\n" methods ^ "\n};\n"
 end
+
+(* Express-style status helpers, cookie setter, cache headers, and error boundary *)
+let status_res ~status ?(content_type = "application/json") ?(headers = []) body : res =
+  { status; content_type; headers; body }
+
+let json_res ?(status = "200 OK") ?(headers = []) (j : Json.t) : res =
+  { status; content_type = "application/json"; headers; body = Json.to_string j }
+
+let created (j : Json.t) : res = json_res ~status:"201 Created" j
+let no_content () : res = { status = "204 No Content"; content_type = "text/plain"; headers = []; body = "" }
+let bad_request msg : res = reject ~status:"400 Bad Request" msg
+let unauthorized msg : res = reject ~status:"401 Unauthorized" msg
+
+let with_cookie ~name ~value ?(path = "/") ?(http_only = true) ?(same_site = "Lax") ?max_age (r : res) : res =
+  let parts = ref [ Printf.sprintf "%s=%s" name value; "Path=" ^ path; "SameSite=" ^ same_site ] in
+  if http_only then parts := !parts @ [ "HttpOnly" ];
+  (match max_age with Some secs -> parts := !parts @ [ "Max-Age=" ^ string_of_int secs ] | None -> ());
+  add_header "Set-Cookie" (String.concat "; " !parts) r
+
+let cache_control (directive : string) : t =
+  fun next req ->
+    let resp = next req in
+    with_header "Cache-Control" directive resp
+
+let error_handler ?(include_trace = false) () : t =
+  fun next req ->
+    try next req
+    with exn ->
+      let msg = if include_trace then Printexc.to_string exn else "Internal server error" in
+      json_res ~status:"500 Internal Server Error"
+        (Json.obj [ ("ok", Json.bool false); ("error", Json.string msg) ])
+
+(* Express-style sub-router supporting GET/POST/PUT/PATCH/DELETE/OPTIONS,
+   :param path extraction, scoped middlewares, and prefix mounting. *)
+module Api_router = struct
+  type route_entry = {
+    meth : string; (* "*" matches any method *)
+    pattern : string;
+    middlewares : t list;
+    handler : (string * string) list -> req -> res;
+  }
+
+  type router = {
+    mutable middlewares : t list;
+    mutable routes : route_entry list;
+  }
+
+  let create () : router = { middlewares = []; routes = [] }
+  let use (r : router) (mw : t) = r.middlewares <- r.middlewares @ [ mw ]
+
+  let add ?(middlewares = []) (r : router) ~meth ~pattern handler =
+    r.routes <- r.routes @ [ { meth = String.uppercase_ascii meth; pattern; middlewares; handler } ]
+
+  let get ?middlewares r pattern h = add ?middlewares r ~meth:"GET" ~pattern h
+  let post ?middlewares r pattern h = add ?middlewares r ~meth:"POST" ~pattern h
+  let put ?middlewares r pattern h = add ?middlewares r ~meth:"PUT" ~pattern h
+  let patch ?middlewares r pattern h = add ?middlewares r ~meth:"PATCH" ~pattern h
+  let delete ?middlewares r pattern h = add ?middlewares r ~meth:"DELETE" ~pattern h
+  let options ?middlewares r pattern h = add ?middlewares r ~meth:"OPTIONS" ~pattern h
+  let all ?middlewares r pattern h = add ?middlewares r ~meth:"*" ~pattern h
+
+  let join_prefix prefix pattern =
+    let p =
+      let trimmed = String.trim prefix in
+      let n = String.length trimmed in
+      if n > 1 && trimmed.[n - 1] = '/' then String.sub trimmed 0 (n - 1) else trimmed
+    in
+    if p = "" || p = "/" then pattern
+    else if pattern = "/" then p
+    else p ^ pattern
+
+  let mount ?(middlewares = []) ~(prefix : string) (parent : router) (child : router) =
+    let combined_mw = middlewares @ child.middlewares in
+    List.iter
+      (fun e ->
+        parent.routes <-
+          parent.routes
+          @ [
+              {
+                e with
+                pattern = join_prefix prefix e.pattern;
+                middlewares = combined_mw @ e.middlewares;
+              };
+            ])
+      child.routes
+
+  let match_route_pattern pat path =
+    let split s = String.split_on_char '/' s |> List.filter (fun x -> x <> "") in
+    let rec go ps xs acc =
+      match (ps, xs) with
+      | [], [] -> Some (List.rev acc)
+      | [ "*" ], _ -> Some (List.rev acc)
+      | p :: pr, x :: xr when String.length p > 1 && p.[0] = ':' ->
+        let name = String.sub p 1 (String.length p - 1) in
+        go pr xr ((name, x) :: acc)
+      | p :: pr, x :: xr when p = x -> go pr xr acc
+      | _ -> None
+    in
+    go (split pat) (split path) []
+
+  let dispatch_opt (r : router) (req : req) : res option =
+    let req_meth = String.uppercase_ascii req.meth in
+    let rec find = function
+      | [] -> None
+      | e :: rest ->
+        if (e.meth = "*" || e.meth = req_meth) then
+          match match_route_pattern e.pattern req.path with
+          | Some params ->
+            let mw_stack = r.middlewares @ e.middlewares in
+            let wrapped = pipeline mw_stack (fun rq -> e.handler params rq) in
+            Some (wrapped req)
+          | None -> find rest
+        else find rest
+    in
+    find r.routes
+
+  let to_handler (r : router) : handler =
+    fun req ->
+      match dispatch_opt r req with
+      | Some res -> res
+      | None ->
+        if String.uppercase_ascii req.meth = "OPTIONS" then
+          status_res ~status:"204 No Content"
+            ~headers:
+              [
+                ("Access-Control-Allow-Origin", "*");
+                ("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+                ("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CSRF-Token");
+              ]
+            ""
+        else reject ~status:"404 Not Found" ("No API route matched " ^ req.meth ^ " " ^ req.path)
+end
